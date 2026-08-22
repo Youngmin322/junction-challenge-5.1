@@ -24,7 +24,7 @@
 
 **Files:**
 - Create: `src/risk-zone/arrival-bands.ts`
-- Modify: `src/risk-zone/types.ts`, `src/risk-zone/simulation.ts`, `src/index.ts`
+- Modify: `src/risk-zone/types.ts`, `src/risk-zone/simulation.ts`
 - Create: `test/risk-zone/arrival-bands.test.ts`
 
 **Interfaces:**
@@ -76,7 +76,7 @@ Project each trajectory segment to local metres, sample at half-cell spacing, an
 
 Run: `npm test -- test/risk-zone/arrival-bands.test.ts && npm run build`
 
-Expected: test passes and TypeScript exits 0. Commit only `arrival-bands.ts`, the specified engine types, simulation export, and the test with message `feat: expose earliest arrival map bands`.
+Expected: test passes and TypeScript exits 0. Commit only `arrival-bands.ts`, the specified engine types, simulation update, and the test with message `feat: expose earliest arrival map bands`.
 
 ### Task 2: Define synthetic scenario inputs
 

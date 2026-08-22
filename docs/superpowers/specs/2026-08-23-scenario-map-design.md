@@ -52,7 +52,7 @@ For every successive position in every trajectory, calculate elapsed minutes fro
 }
 ```
 
-`SimulationResult` gains `earliestArrivalBands`, produced after trajectories are finalised. It uses the largest configured horizon as its maximum. Custom horizons are legal, but a cell after 48 hours has no display band and is excluded by the default demo configuration.
+`SimulationResult` gains `earliestArrivalBands`, produced after trajectories are finalised. It uses the largest configured horizon as its maximum. Custom horizons are legal, but a cell after 48 hours has no display band and is excluded by the default demo configuration. The browser only reads this result field and does not require changes to concurrently edited public-export files.
 
 ## Data-provider boundary
 
