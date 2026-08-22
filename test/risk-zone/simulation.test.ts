@@ -69,6 +69,19 @@ describe('conditional connectivity simulation', () => {
     expect(result.diagnostics).toContainEqual(expect.objectContaining({ code: 'flow-coverage-miss' }));
   });
 
+  it('exposes mutually exclusive earliest-arrival cells for map rendering', () => {
+    const result = simulateConditionalConnectivity(baseInput({
+      config: { horizonsHours: [2], regionCellSizeMeters: 1_000 },
+    }));
+
+    expect(result).toHaveProperty('earliestArrivalBands');
+    expect((result as unknown as {
+      earliestArrivalBands: { features: Array<{ properties: { arrivalBand: string } }> };
+    }).earliestArrivalBands.features).toContainEqual(expect.objectContaining({
+      properties: expect.objectContaining({ arrivalBand: 'within-2h' }),
+    }));
+  });
+
   it('terminates a particle that cannot traverse the coastline', () => {
     const result = simulateConditionalConnectivity(baseInput({
       navigability: { canTraverse: () => ({ passable: false, reason: 'land' }) },

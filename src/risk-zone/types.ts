@@ -1,4 +1,4 @@
-import type { FeatureCollection, MultiPolygon } from 'geojson';
+import type { FeatureCollection, MultiPolygon, Polygon } from 'geojson';
 
 export type Position = readonly [longitude: number, latitude: number];
 
@@ -159,6 +159,15 @@ export interface SimulationSnapshot {
   representedParticleCount: number;
 }
 
+export type ArrivalBand = 'within-2h' | 'within-4h' | 'within-24h' | 'within-48h';
+
+export interface EarliestArrivalCellProperties {
+  cellId: string;
+  earliestArrivalMinutes: number;
+  arrivalBand: ArrivalBand;
+  simulatedParticleVisits: number;
+}
+
 export type SimulationDiagnosticCode =
   | 'flow-coverage-miss'
   | 'navigability-rejection'
@@ -185,5 +194,6 @@ export interface SimulationResult {
   horizonSummaries: HorizonSummary[];
   snapshots: SimulationSnapshot[];
   particleTrajectories: ParticleTrajectory[];
+  earliestArrivalBands: FeatureCollection<Polygon, EarliestArrivalCellProperties>;
   diagnostics: SimulationDiagnostic[];
 }

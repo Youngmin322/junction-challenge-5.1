@@ -1,6 +1,7 @@
 import { effectiveVelocityAt } from './flow-field.js';
 import { createLocalProjection, segmentsIntersect } from './geo.js';
 import { buildConnectivityRegions } from './regions.js';
+import { buildEarliestArrivalBands } from './arrival-bands.js';
 import { materializeParticles } from './seed.js';
 import { validateSimulationInput } from './validation.js';
 import { CONDITIONAL_CONNECTIVITY_DISCLAIMER } from '../index.js';
@@ -137,6 +138,13 @@ export function simulateConditionalConnectivity(input: SimulationInput): Simulat
     }
   }
 
+  const particleTrajectories = particles.map((particle) => ({
+    id: particle.id,
+    status: particle.status,
+    firstGateArrivalAt: particle.firstGateArrivalAt?.toISOString() ?? null,
+    coordinates: particle.coordinates,
+  }));
+
   return {
     classification: 'conditional-connectivity-not-blockage-probability',
     disclaimer: CONDITIONAL_CONNECTIVITY_DISCLAIMER,
@@ -169,12 +177,14 @@ export function simulateConditionalConnectivity(input: SimulationInput): Simulat
       };
     }),
     snapshots,
-    particleTrajectories: particles.map((particle) => ({
-      id: particle.id,
-      status: particle.status,
-      firstGateArrivalAt: particle.firstGateArrivalAt?.toISOString() ?? null,
-      coordinates: particle.coordinates,
-    })),
+    particleTrajectories,
+    earliestArrivalBands: buildEarliestArrivalBands({
+      trajectories: particleTrajectories,
+      anchor,
+      timeStepMinutes: config.timeStepMinutes,
+      cellSizeMeters: config.regionCellSizeMeters,
+      maximumArrivalMinutes: maximumMinutes,
+    }),
     diagnostics,
   };
 }
