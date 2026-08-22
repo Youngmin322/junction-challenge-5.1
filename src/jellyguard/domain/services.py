@@ -427,6 +427,34 @@ class DomainService:
             query_id=self.new_id("QUERY"),
         )
 
+    @staticmethod
+    def _latest_known_cluster(candidates: list[dict], catalog: list[dict]) -> dict | None:
+        """Point at whichever already-loaded, timestamped record is newest, honestly labeled.
+
+        This never invents or reinterprets a timestamp. It only compares the `observed_at`
+        values already present on records that also carry a `geometry` (i.e. records that are
+        actually point observations, not report bulletins like the NIFS catalog today). If a
+        live source is ever configured and starts returning real point observations, it wins
+        this comparison automatically because it is simply newer — nothing here is hardcoded
+        to the historical fixture.
+        """
+        pool = [
+            record
+            for record in (*candidates, *catalog)
+            if record.get("observed_at") and record.get("geometry")
+        ]
+        if not pool:
+            return None
+        latest = max(pool, key=lambda record: record["observed_at"])
+        observed_date = str(latest["observed_at"])[:10]
+        designated = deepcopy(latest)
+        designated["designated_as"] = "latest_available_demo_cluster"
+        designated["demo_current_cluster_warning"] = (
+            "실시간 관측이 없어 데모 목적으로 가장 최근에 확보된 과거 관측을 "
+            f"'현재 군집'으로 지정했습니다. 관측 시각은 {observed_date}이며 실시간이 아닙니다."
+        )
+        return designated
+
     def search_observations(
         self,
         *,
@@ -440,6 +468,7 @@ class DomainService:
         limit: int = 100,
         cursor: str | None = None,
         include_scenario_seeds: bool = False,
+        demo_current_cluster: bool = False,
     ) -> DomainResult:
         modes = self._modes(allowed_modes)
         observation_resolution = self.source_resolver.resolve(
@@ -471,6 +500,7 @@ class DomainService:
             "presence": presence,
             "limit": limit,
             "cursor": cursor,
+            "demo_current_cluster": demo_current_cluster,
         }
 
         try:
@@ -506,6 +536,7 @@ class DomainService:
                     "candidates_scanned": 0,
                     "excluded_counts": {},
                     "scenario_seeds_returned": 0,
+                    "latest_cluster": None,
                 },
                 status_reasons=[ErrorCode.SCHEMA_INVALID.value],
                 error=ServiceError(code=ErrorCode.SCHEMA_INVALID, message=str(exc)),
@@ -573,6 +604,12 @@ class DomainService:
             if include_scenario_seeds and DataMode.SYNTHETIC in modes
             else []
         )
+        # Computed from the unfiltered candidate pools (not the query-filtered `records`),
+        # because "the latest known cluster" is a standing demo designation, not an answer to
+        # this particular query's bbox/time filters.
+        latest_cluster = (
+            self._latest_known_cluster(candidates, catalog) if demo_current_cluster else None
+        )
         if not records and not catalog:
             return self._result(
                 tool_name="search_observations",
@@ -587,12 +624,18 @@ class DomainService:
                     "candidates_scanned": 0,
                     "excluded_counts": {},
                     "scenario_seeds_returned": len(scenario_seeds),
+                    "latest_cluster": latest_cluster,
                 },
                 status_reasons=[ErrorCode.NO_COMPATIBLE_SOURCE.value],
                 modes=[DataMode.SYNTHETIC] if scenario_seeds else [],
                 error=ServiceError(
                     code=ErrorCode.NO_COMPATIBLE_SOURCE,
                     message="허용된 모드에서 관측·catalog 자료를 선택할 수 없습니다.",
+                ),
+                warnings=(
+                    [latest_cluster["demo_current_cluster_warning"]]
+                    if latest_cluster is not None
+                    else []
                 ),
                 query_id=self.new_id("QUERY"),
             )
@@ -633,6 +676,7 @@ class DomainService:
                 "candidates_scanned": len(candidates),
                 "excluded_counts": excluded_counts,
                 "scenario_seeds_returned": len(scenario_seeds),
+                "latest_cluster": latest_cluster,
             },
             modes=used_modes,
             selected_sources=[
@@ -649,6 +693,11 @@ class DomainService:
                 *(
                     [catalog_resolution.public_reason]
                     if catalog_resolution.public_reason is not None
+                    else []
+                ),
+                *(
+                    [latest_cluster["demo_current_cluster_warning"]]
+                    if latest_cluster is not None
                     else []
                 ),
             ],

@@ -28,6 +28,7 @@ class SearchRequest(BaseModel):
     limit: int = Field(default=100, ge=1, le=1000)
     cursor: str | None = None
     include_scenario_seeds: bool = False
+    demo_current_cluster: bool = False
 
 
 class ScenarioSeedRequest(BaseModel):
@@ -167,6 +168,7 @@ def create_app(settings: Settings | None = None, service: DomainService | None =
             limit=request.limit,
             cursor=request.cursor,
             include_scenario_seeds=request.include_scenario_seeds,
+            demo_current_cluster=request.demo_current_cluster,
         ).model_dump(mode="json")
 
     @app.post("/v1/observations/scenario-seeds")

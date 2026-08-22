@@ -70,6 +70,73 @@ def test_scenario_seed_never_enters_direct_records():
     assert seed["seed_id"] in {item["seed_id"] for item in result.data["scenario_seeds"]}
 
 
+def test_latest_known_cluster_picks_newest_candidate_by_observed_at():
+    from jellyguard.domain.services import DomainService
+
+    older = {
+        "observation_id": "OBS-OLD",
+        "observed_at": "2019-07-11T00:00:00Z",
+        "geometry": {"type": "Point", "coordinates": [129.4, 37.0]},
+        "claim_type": "direct_observation",
+        "data_mode": "CACHED",
+    }
+    newer = {
+        "observation_id": "OBS-NEW",
+        "observed_at": "2024-03-02T00:00:00Z",
+        "geometry": {"type": "Point", "coordinates": [129.4, 37.1]},
+        "claim_type": "direct_observation",
+        "data_mode": "CACHED",
+    }
+    # Order in the candidate list must not matter, and catalog items without a geometry
+    # (report bulletins, not point observations) must never be eligible.
+    catalog_bulletin = {"catalog_id": "NIFS-X", "registered_at": "2026-01-01T00:00:00Z"}
+    latest = DomainService._latest_known_cluster([newer, older], [catalog_bulletin])
+    assert latest["observation_id"] == "OBS-NEW"
+    assert latest["observed_at"] == "2024-03-02T00:00:00Z"
+    assert latest["designated_as"] == "latest_available_demo_cluster"
+
+
+def test_latest_known_cluster_staleness_warning_states_true_observed_date():
+    from jellyguard.domain.services import DomainService
+
+    record = {
+        "observation_id": "OBS-HANUL-HIST-001",
+        "observed_at": "2019-07-11T00:00:00Z",
+        "geometry": {"type": "Point", "coordinates": [129.405, 37.09]},
+        "claim_type": "direct_observation",
+        "data_mode": "CACHED",
+    }
+    latest = DomainService._latest_known_cluster([record], [])
+    warning = latest["demo_current_cluster_warning"]
+    assert "2019-07-11" in warning
+    assert "실시간" in warning
+    assert "현재 군집" in warning
+    # The observed_at itself must survive untouched -- honest labeling, not a rewritten date.
+    assert latest["observed_at"] == "2019-07-11T00:00:00Z"
+
+
+def test_demo_current_cluster_is_off_by_default():
+    result = service().search_observations(allowed_modes=["CACHED"])
+    assert result.data["latest_cluster"] is None
+
+
+def test_demo_current_cluster_designates_fixture_without_fabricating_recency():
+    result = service().search_observations(allowed_modes=["CACHED"], demo_current_cluster=True)
+    cluster = result.data["latest_cluster"]
+    assert cluster is not None
+    assert cluster["observation_id"] == "OBS-HANUL-HIST-001"
+    assert cluster["observed_at"] == "2019-07-11T00:00:00Z"
+    assert cluster["designated_as"] == "latest_available_demo_cluster"
+    # The record's own honesty fields must stay truthful -- this is a labeling decision,
+    # not a claim of live/real-time data.
+    assert cluster["claim_type"] == "direct_observation"
+    assert cluster["data_mode"] == "CACHED"
+    assert result.claim_type == "direct_observation"
+    assert "CACHED" in result.input_mode_set
+    assert "LIVE" not in result.input_mode_set
+    assert any("현재 군집" in warning and "2019-07-11" in warning for warning in result.warnings)
+
+
 def test_live_failure_does_not_silently_select_synthetic():
     result = service().get_field_status(allowed_modes=["LIVE"])
     assert result.status == "BLOCKED"
