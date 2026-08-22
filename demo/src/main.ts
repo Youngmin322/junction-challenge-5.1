@@ -12,7 +12,10 @@ import type { Feature, FeatureCollection, LineString, Point, Polygon } from 'geo
 import { createLocalProjection } from '../../src/risk-zone/geo.js';
 import { simulateConditionalConnectivity } from '../../src/risk-zone/simulation.js';
 import type { Position, VelocitySample } from '../../src/risk-zone/types.js';
-import { buildCurrentOrientedFanEnvelope } from './map-data.js';
+import {
+  buildCurrentOrientedFanEnvelope,
+  traceUpstreamCurrentCenterline,
+} from './map-data.js';
 import { demoScenarios, getDemoScenario, type DemoScenario } from './scenarios.js';
 import './style.css';
 
@@ -55,16 +58,19 @@ scenarioSelect.addEventListener('change', () => {
   renderScenario(true);
 });
 
-timeline.addEventListener('input', () => renderScenario(false));
+timeline.addEventListener('input', () => renderScenario(true));
 
 function renderScenario(fitViewport: boolean): void {
   const selectedHours = Number(timeline.value);
   const current = representativeCurrentAt(selectedScenario, selectedHours);
-  const approachBands = buildCurrentOrientedFanEnvelope({
-    intakePosition: selectedScenario.intakePosition,
-    uMetersPerSecond: current.uMetersPerSecond,
-    vMetersPerSecond: current.vMetersPerSecond,
-  });
+  const approachBands = current
+    ? buildCurrentOrientedFanEnvelope({
+      intakePosition: selectedScenario.intakePosition,
+      uMetersPerSecond: current.uMetersPerSecond,
+      vMetersPerSecond: current.vMetersPerSecond,
+      sampleVelocityAt: (position) => currentVectorAt(selectedScenario, selectedHours, position),
+    })
+    : emptyCollection<Polygon>();
 
   timelineValue.textContent = `${selectedHours}시간`;
   scenarioDescription.textContent = selectedScenario.description;
@@ -77,26 +83,31 @@ function renderScenario(fitViewport: boolean): void {
 
   source(map, 'coast').setData(selectedScenario.coast);
   source(map, 'approach-bands').setData(approachBands);
-  source(map, 'current-arrows').setData(buildCurrentArrows(
-    selectedScenario,
-    selectedHours,
-    current,
-  ));
+  source(map, 'current-arrows').setData(current
+    ? buildCurrentArrows(selectedScenario, selectedHours, current)
+    : emptyCollection<LineString>());
   source(map, 'seed').setData(buildSeed(selectedScenario));
   source(map, 'gate').setData(buildGate(selectedScenario));
   source(map, 'intake').setData(buildIntakeMarkers(selectedScenario));
-  updateStatus(current);
+  updateStatus(current, approachBands.features.length > 0);
 
-  if (fitViewport) fitScenario(map, selectedScenario);
+  if (fitViewport) fitScenario(map, selectedScenario, approachBands);
 }
 
-function updateStatus(current: VelocitySample): void {
+function updateStatus(current: VelocitySample | null, hasCompleteCoverage: boolean): void {
+  if (!current || !hasCompleteCoverage) {
+    pathStatus.textContent = '선택 시점의 해류 데이터 범위가 부족합니다';
+    pathStatus.dataset.connected = 'false';
+    connectionValue.textContent = '데이터 없음';
+    etaValue.textContent = '—';
+    return;
+  }
   const speed = Math.hypot(current.uMetersPerSecond, current.vMetersPerSecond);
   const bearing = normalizeDegrees(
     (Math.atan2(current.uMetersPerSecond, current.vMetersPerSecond) * 180) / Math.PI,
   );
 
-  pathStatus.textContent = '전체 부채꼴 영역 표시 중';
+  pathStatus.textContent = '전체 곡선 접근영역 표시 중';
   pathStatus.dataset.connected = 'true';
   connectionValue.textContent = `${compassDirection(bearing)} ${Math.round(bearing)}°`;
   etaValue.textContent = `${speed.toFixed(2)} m/s`;
@@ -218,40 +229,40 @@ function buildCurrentArrows(
   selectedHours: number,
   representativeCurrent: VelocitySample,
 ): FeatureCollection<LineString> {
-  const envelope = buildCurrentOrientedFanEnvelope({
+  const centerline = traceUpstreamCurrentCenterline({
     intakePosition: scenario.intakePosition,
     uMetersPerSecond: representativeCurrent.uMetersPerSecond,
     vMetersPerSecond: representativeCurrent.vMetersPerSecond,
+    sampleVelocityAt: (position) => currentVectorAt(scenario, selectedHours, position),
   });
-  const envelopeProperties = envelope.features[0]!.properties;
-  const speed = Math.hypot(
-    representativeCurrent.uMetersPerSecond,
-    representativeCurrent.vMetersPerSecond,
-  );
-  const upstreamX = speed > 0 ? -representativeCurrent.uMetersPerSecond / speed : 1;
-  const upstreamY = speed > 0 ? -representativeCurrent.vMetersPerSecond / speed : 0;
-  const perpendicularX = -upstreamY;
-  const perpendicularY = upstreamX;
+  if (!centerline.coverageComplete || centerline.positions.length < 2) {
+    return emptyCollection<LineString>();
+  }
   const projection = createLocalProjection(scenario.intakePosition);
-  const requestedAt = new Date(
-    new Date(scenario.input.seed.observedAt).valueOf() + selectedHours * 3_600_000,
-  );
+  const localCenterline = centerline.positions.map((position) => projection.toLocal(position));
+  const lastIndex = localCenterline.length - 1;
   const features: Array<Feature<LineString>> = [];
 
   for (const fraction of [0.18, 0.4, 0.62, 0.84]) {
-    const distanceFromIntake = envelopeProperties.envelopeLengthMeters * fraction;
-    const halfWidth = distanceFromIntake * Math.tan(
-      (envelopeProperties.halfAngleDegrees * Math.PI) / 180,
+    const index = Math.round(lastIndex * fraction);
+    const center = localCenterline[index]!;
+    const previous = localCenterline[Math.max(0, index - 1)]!;
+    const next = localCenterline[Math.min(lastIndex, index + 1)]!;
+    const tangentLength = Math.hypot(next[0] - previous[0], next[1] - previous[1]) || 1;
+    const normalX = -(next[1] - previous[1]) / tangentLength;
+    const normalY = (next[0] - previous[0]) / tangentLength;
+    const halfWidth = centerline.envelopeLengthMeters * fraction * Math.tan(
+      (centerline.halfAngleDegrees * Math.PI) / 180,
     );
     for (const lateralFraction of [-0.38, 0.38]) {
       const position = projection.toGeographic([
-        upstreamX * distanceFromIntake + perpendicularX * halfWidth * lateralFraction,
-        upstreamY * distanceFromIntake + perpendicularY * halfWidth * lateralFraction,
+        center[0] + normalX * halfWidth * lateralFraction,
+        center[1] + normalY * halfWidth * lateralFraction,
       ]);
       const velocity = scenario.input.offshoreFlow.velocityAt({
         position,
         depthMeters: scenario.input.seed.depthMeters,
-        validAt: requestedAt,
+        validAt: selectedValidAt(scenario, selectedHours),
       });
       if (!velocity) continue;
       const end = createLocalProjection(position).toGeographic([
@@ -274,20 +285,35 @@ function buildCurrentArrows(
 function representativeCurrentAt(
   scenario: DemoScenario,
   selectedHours: number,
-): VelocitySample {
-  const validAt = new Date(
-    new Date(scenario.input.seed.observedAt).valueOf() + selectedHours * 3_600_000,
-  );
+): VelocitySample | null {
+  const validAt = selectedValidAt(scenario, selectedHours);
   return scenario.input.offshoreFlow.velocityAt({
     position: scenario.intakePosition,
     depthMeters: scenario.input.seed.depthMeters,
     validAt,
-  }) ?? {
-    uMetersPerSecond: 0,
-    vMetersPerSecond: 0,
-    sourceTime: validAt,
-    validAt,
-  };
+  });
+}
+
+function currentVectorAt(
+  scenario: DemoScenario,
+  selectedHours: number,
+  position: Position,
+): Pick<VelocitySample, 'uMetersPerSecond' | 'vMetersPerSecond'> | null {
+  const sample = scenario.input.offshoreFlow.velocityAt({
+    position,
+    depthMeters: scenario.input.seed.depthMeters,
+    validAt: selectedValidAt(scenario, selectedHours),
+  });
+  return sample ? {
+    uMetersPerSecond: sample.uMetersPerSecond,
+    vMetersPerSecond: sample.vMetersPerSecond,
+  } : null;
+}
+
+function selectedValidAt(scenario: DemoScenario, selectedHours: number): Date {
+  return new Date(
+    new Date(scenario.input.seed.observedAt).valueOf() + selectedHours * 3_600_000,
+  );
 }
 
 function buildSeed(scenario: DemoScenario): FeatureCollection<Point> {
@@ -335,14 +361,24 @@ function buildIntakeMarkers(scenario: DemoScenario): FeatureCollection<Point> {
   };
 }
 
-function fitScenario(target: Map, scenario: DemoScenario): void {
+function fitScenario(
+  target: Map,
+  scenario: DemoScenario,
+  approachBands: FeatureCollection<Polygon>,
+): void {
   const seed = seedPosition(scenario);
-  const projection = createLocalProjection(scenario.intakePosition);
   const bounds = new LngLatBounds(toMapPosition(seed), toMapPosition(seed));
   bounds.extend(toMapPosition(scenario.sitePosition));
   bounds.extend(toMapPosition(scenario.intakePosition));
-  bounds.extend(toMapPosition(projection.toGeographic([-23_000, -23_000])));
-  bounds.extend(toMapPosition(projection.toGeographic([23_000, 23_000])));
+  for (const feature of approachBands.features) {
+    for (const ring of feature.geometry.coordinates) {
+      for (const [longitude, latitude] of ring) {
+        if (longitude !== undefined && latitude !== undefined) {
+          bounds.extend([longitude, latitude]);
+        }
+      }
+    }
+  }
   const gate = scenario.input.gate;
   if (gate.kind === 'endpoints') {
     bounds.extend(toMapPosition(gate.start));

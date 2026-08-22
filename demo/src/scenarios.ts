@@ -225,7 +225,10 @@ function targetSeekingFlow(target: Position): FlowFieldProvider {
 
       const phase = (elapsedHours / 24) * Math.PI;
       const speed = 0.24 + 0.1 * Math.sin(phase);
-      const crossCurrent = 0.08 * Math.sin(phase + (position[1] - 37.1) * 30);
+      const [offshoreDistance, alongshoreDistance] = createLocalProjection(target).toLocal(position);
+      const crossCurrent = 0.11 * Math.sin(
+        phase + offshoreDistance / 2_500 + alongshoreDistance / 5_000,
+      );
       const eastUnit = towardTargetX / distance;
       const northUnit = towardTargetY / distance;
       return {

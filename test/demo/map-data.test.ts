@@ -4,6 +4,7 @@ import {
   buildCurrentOrientedFanEnvelope,
   filterArrivalBands,
   prepareApproachBands,
+  traceUpstreamCurrentCenterline,
 } from '../../demo/src/map-data.js';
 import type { EarliestArrivalCellProperties } from '../../src/risk-zone/types.js';
 
@@ -99,5 +100,45 @@ describe('current-oriented fan envelope', () => {
       .toBeLessThan(slow.features[0]!.properties.halfAngleDegrees);
     expect(slow.features).toHaveLength(4);
     expect(fast.features).toHaveLength(4);
+  });
+
+  it('bends the centerline when the current direction changes across space', () => {
+    const centerline = traceUpstreamCurrentCenterline({
+      intakePosition: [129.397, 37.0931],
+      uMetersPerSecond: -0.2,
+      vMetersPerSecond: 0,
+      sampleVelocityAt: ([longitude]) => ({
+        uMetersPerSecond: -0.2,
+        vMetersPerSecond: Math.min(0.16, Math.max(0, (longitude - 129.397) * 0.4)),
+      }),
+    });
+
+    const first = centerline.positions[0]!;
+    const second = centerline.positions[1]!;
+    const penultimate = centerline.positions.at(-2)!;
+    const last = centerline.positions.at(-1)!;
+
+    expect(centerline.positions.length).toBeGreaterThan(20);
+    expect(Math.abs(second[1] - first[1])).toBeLessThan(0.0001);
+    expect(last[1] - penultimate[1]).toBeLessThan(-0.0001);
+    expect(last[1]).toBeLessThan(37.085);
+  });
+
+  it('does not fabricate a corridor when spatial current coverage is incomplete', () => {
+    const input = {
+      intakePosition: [129.397, 37.0931] as const,
+      uMetersPerSecond: -0.2,
+      vMetersPerSecond: 0,
+      sampleVelocityAt: ([longitude]: readonly [number, number]) => longitude < 129.42
+        ? { uMetersPerSecond: -0.2, vMetersPerSecond: 0 }
+        : null,
+    };
+
+    const centerline = traceUpstreamCurrentCenterline(input);
+    const envelope = buildCurrentOrientedFanEnvelope(input);
+
+    expect(centerline.coverageComplete).toBe(false);
+    expect(centerline.positions.length).toBeGreaterThan(1);
+    expect(envelope.features).toHaveLength(0);
   });
 });

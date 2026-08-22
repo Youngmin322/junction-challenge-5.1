@@ -2,7 +2,7 @@
 
 ## Goal
 
-Add a browser-based, map-first demonstration on top of the existing TypeScript conditional-connectivity engine. It must make a dummy scenario visually understandable: an observed organism cluster is seeded offshore of the Hanul nuclear power site in Uljin, and a current-oriented fan shows the complete conditional approach direction around the intake. Particle outputs remain available for later analytical use, but the primary display is a stable four-band fan rather than a cumulative trajectory filter.
+Add a browser-based, map-first demonstration on top of the existing TypeScript conditional-connectivity engine. It must make a dummy scenario visually understandable: an observed organism cluster is seeded offshore of the Hanul nuclear power site in Uljin, and a current-oriented curved ribbon shows the complete conditional approach direction around the intake. Particle outputs remain available for later analytical use, but the primary display is a stable four-band ribbon rather than a cumulative trajectory filter.
 
 The demonstration is not an operational forecast or a blockage-risk product. Every visible result must state that it is a scenario result under supplied inputs, not a probability of organism abundance, blockage, or facility risk.
 
@@ -18,14 +18,15 @@ The existing three explanatory scenarios remain available:
 2. **Tidal turn** — the vector turns after four hours, visibly bending the plume.
 3. **Coastal interception** — part of the ensemble meets a non-navigable land/shallow area and terminates.
 
-For each run, the map renders, in this order: base map, optional fictional constraint outline, current-oriented approach fan, current arrows, seed marker, monitoring gate, and Hanul intake marker. A scenario selector and a 0–48 hour slider let a viewer select the synthetic current at that time. All four fan bands remain visible at every slider value.
+For each run, the map renders, in this order: base map, optional fictional constraint outline, current-oriented curved approach ribbon, current arrows, seed marker, monitoring gate, and Hanul intake marker. A scenario selector and a 0–48 hour slider let a viewer select the synthetic current at that time. All four bands remain visible at every slider value, and the viewport refits so none is hidden by a direction change.
 
 ### Current-oriented fan display
 
 Time, shape, and colour have independent meanings:
 
 - the slider samples the scenario flow provider at the selected hour and never hides a fan band;
-- the fan opens upstream from the current vector and rotates around the intake as direction changes;
+- the renderer traces upstream from the intake while repeatedly sampling the flow provider at each new position, so spatially varying currents bend the centerline;
+- the ribbon opens around that centerline and rotates around the intake as time-dependent direction changes;
 - faster currents create a longer, directionally narrower fan, while slower currents create a shorter, wider fan;
 - the fill colour uses four relative length intervals, so the intake end remains darkest and every colour remains visible as the shape changes;
 - the map and legend use text as well as colour, so colour is not the only carrier of meaning.
@@ -95,7 +96,7 @@ For every successive position in every trajectory, calculate elapsed minutes fro
 
 The map never knows whether currents came from dummy JSON or an actual service. It consumes `SimulationInput`, whose `offshoreFlow`, optional `nearshorePolicy`, and `navigability` are already mockable interfaces.
 
-- `demo/src/scenarios.ts` supplies `FlowFieldProvider` and `NavigabilityProvider` implementations constructed from deterministic synthetic functions and optional fictional coast polygons. The default Hanul provider returns a velocity aimed generally from the requested offshore point toward the intake monitoring point, with a small deterministic cross-current so the corridor remains visibly spread.
+- `demo/src/scenarios.ts` supplies `FlowFieldProvider` and `NavigabilityProvider` implementations constructed from deterministic synthetic functions and optional fictional coast polygons. The default Hanul provider returns a velocity aimed generally from the requested offshore point toward the intake monitoring point, with a deterministic spatial meander so the traced corridor visibly curves.
 - A future ROMS/nearshore adapter converts raw API rows into the existing `PublicRiskZoneInput` / `calculateRiskZone` entry point, then passes the produced result to the same map renderer.
 - Map features are stable GeoJSON with properties above, so a REST endpoint or a local scenario can both replace a source through `GeoJSONSource.setData`.
 
@@ -111,6 +112,6 @@ The desktop layout is map-first with a dark operations sidebar. The sidebar cont
 
 ## Validation
 
-Tests must prove that first arrival wins when trajectories revisit a cell, a line segment populates intermediate cells, earliest-arrival bands receive the correct boundaries, coordinates beyond the configured maximum horizon are omitted, approach thresholds assign exact boundary distances correctly, all four fan bands remain present, fan direction rotates upstream, faster currents lengthen and narrow the fan, and the Hanul synthetic current changes enough over time to visibly rotate and resize it. Existing engine tests must remain passing.
+Tests must prove that first arrival wins when trajectories revisit a cell, a line segment populates intermediate cells, earliest-arrival bands receive the correct boundaries, coordinates beyond the configured maximum horizon are omitted, approach thresholds assign exact boundary distances correctly, all four bands remain present, flow direction rotates upstream, faster currents lengthen and narrow the ribbon, spatially varying currents bend its centerline, and the Hanul synthetic current changes enough across both time and space to visibly rotate, curve, and resize it. Existing engine tests must remain passing.
 
 `npm run demo:build` must compile the browser app, while `npm test` and `npm run build` continue to validate the engine. A `demo/README.md` documents local startup, all available scenarios, the output semantics, the real Hanul location context, and the exact real-data replacement boundary.
