@@ -15,3 +15,6 @@ export {
   segmentsIntersect,
 } from './risk-zone/geo.js';
 export { effectiveVelocityAt, GriddedFlowFieldProvider } from './risk-zone/flow-field.js';
+export { materializeParticles } from './risk-zone/seed.js';
+export { CoastAndBathymetryProvider } from './risk-zone/navigability.js';
+export type { BathymetrySampler, CoastAndBathymetryOptions } from './risk-zone/navigability.js';

@@ -130,6 +130,14 @@ export type ParticleStatus =
   | 'outside-navigability-coverage'
   | 'outside-flow-coverage';
 
+export interface MutableParticle {
+  id: string;
+  depthMeters: number;
+  status: ParticleStatus;
+  firstGateArrivalAt: Date | null;
+  coordinates: Position[];
+}
+
 export interface ParticleTrajectory {
   id: string;
   status: ParticleStatus;
