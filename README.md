@@ -1,10 +1,12 @@
 # 원전 취수구 조건부 연결영역 MVP
 
-관측된 해양생물 군집을 시간별 유동장으로 전진 이동시켜, 원전 측 가상 감시 게이트와의 **조건부 연결영역**을 계산하는 TypeScript 라이브러리입니다.
+공공데이터 행을 넣어 원전 측 가상 감시 게이트까지의 **조건부 연결영역**을 계산합니다. 사용하는 함수는 하나입니다.
 
-이 모듈은 해양생물 개체수나 원전 취수구 막힘 가능성을 예측하지 않습니다. 입력된 관측·해류·지형·게이트 조건에서 입자들이 연결되는지를 계산하는 엔진입니다.
+~~~ts
+const result = calculateRiskZone(publicData);
+~~~
 
-> This output is a conditional particle-connectivity calculation under supplied observation, flow, navigability, and gate assumptions. It is not an estimate of organism abundance, intake blockage probability, or facility risk.
+> 이 결과는 주어진 관측·해류·지형·게이트 조건에서의 입자 연결 계산입니다. 생물량, 취수구 막힘 확률, 시설 위험도를 뜻하지 않습니다.
 
 ## 실행
 
@@ -15,69 +17,34 @@ npm run build
 npm run example
 ~~~
 
-npm run example은 네트워크를 호출하지 않는 일정한 동향 해류와 열린 바다 제약으로 결과 JSON을 출력합니다.
-
-## MVP 입력 계약
-
-| 필요한 데이터 | 엔진 입력 | 필수로 정규화할 값 | 역할 |
-| --- | --- | --- | --- |
-| 해양생물 군집 관측정보 | ObservationSeed | 관측시각, 점 또는 폴리곤, 종, 관측/가정 수심, 신뢰도 | 입자 출발 위치와 개수 설정 |
-| 시간별 해류 예측장 | FlowFieldProvider | 예보 발표시각, 유효시각, 위경도, 수심, u/v | 2/4/24/48시간 전진 이동 |
-| 연안 조류 예측 | NearshoreFlowPolicy | 시간별 u/v, 적용 폴리곤, 조석 역전 반영 벡터 | 취수구 인근 유동장 교체 또는 명시적 잔차 보정 |
-| 수심·해안선 | NavigabilityProvider | 수심, 육지 폴리곤, 최소 통과 수심 | 육지·얕은 물·미관측 수역 이동 차단 |
-| 가상 감시 게이트 | MonitoringGate | 선분 또는 중심/폭/방향, 깊이 범위 | 첫 게이트 교차와 ETA 계산 |
-
-모든 위치는 GeoJSON 순서인 [longitude, latitude]입니다. 시간은 ISO-8601 UTC 문자열이고, 속도는 m/s입니다. u는 동쪽, v는 북쪽을 양수로 합니다. 원천 API가 “향하는 방향” 대신 “불어오는/흘러오는 방향”을 제공하면 어댑터에서 180도를 변환한 뒤 u/v로 바꿔야 합니다.
-
-## 외부 데이터 연결 방식
-
-계산 엔진은 API 키를 보관하거나 HTTP 호출을 하지 않습니다. 수집 코드에서 데이터를 정규화한 뒤 다음 인터페이스를 구현해 주입합니다.
+## 공공데이터를 넣는 단순 구조
 
 ~~~ts
-const romsAdapter: FlowFieldProvider = {
-  velocityAt({ position, depthMeters, validAt }) {
-    // ROMS 레코드를 위치·수심·유효시각으로 찾고, 방향/속도를 u/v로 변환한다.
-    // 관측 범위 밖이면 null을 반환한다. 0 m/s를 null로 바꾸지 않는다.
-    return { uMetersPerSecond, vMetersPerSecond, sourceTime, validAt };
-  },
-};
-
-const coastAdapter: NavigabilityProvider = {
-  canTraverse({ from, to, particleDepthMeters, at }) {
-    // 전체 선분이 육지, 얕은 수역, 수심 미관측 범위를 통과하는지 판정한다.
-    return { passable: true };
-  },
-};
+calculateRiskZone({
+  observation,       // ① 관측 군집
+  offshoreCurrents, // ② 시간별 해류
+  nearshore,         // ③ 연안 조류: 선택
+  coast,             // ④ 수심·해안선
+  gate,              // ⑤ 가상 감시 게이트
+});
 ~~~
 
-GriddedFlowFieldProvider는 해커톤 fixture나 정규화된 격자 레코드에 사용할 수 있는 기본 구현입니다. 요청 시각 전후의 동일 수심 기록을 시간 선형보간하고, 각 시각에서는 가장 가까운 격자점을 사용합니다. 공간 이중선형 보간은 이 MVP에 포함하지 않습니다.
+| 데이터 | 넣는 위치 | 꼭 필요한 값 |
+| --- | --- | --- |
+| 해양생물 군집 관측 | observation | 관측시각, 점/폴리곤, 종, 수심, 신뢰도 |
+| 시간별 해류 예측 | offshoreCurrents | 발표시각, 유효시각, 위경도, 수심, u/v 또는 유향·유속 |
+| 연안 조류 예측 | nearshore | 적용 폴리곤, 시간별 해류 행, mode |
+| 수심·해안선 | coast | 육지 폴리곤, 수심 점, 최소 통과 수심 |
+| 가상 감시 게이트 | gate | 선분 또는 중심/폭/방향, 깊이 범위 |
 
-### ROMS와 조류도는 자동 합산하지 않습니다
+모든 좌표는 [longitude, latitude] 순서이고, 시간은 ISO-8601 UTC, 속도는 m/s입니다.
 
-기본 해류가 조석을 이미 포함할 수 있으므로, 연안 조류는 다음 중 하나만 선택합니다.
-
-- replace: 연안 적용 폴리곤 내부에서 해류장을 연안 조류장으로 교체합니다. 기본 권장 방식입니다.
-- residualAdd: 연안 데이터가 기본 해류에 포함되지 않은 **잔차 벡터**임을 데이터 어댑터가 보장할 때만 합산합니다. isResidual: true가 필요합니다.
-
-## 결과 해석
-
-simulateConditionalConnectivity(input)은 다음을 반환합니다.
-
-- horizonSummaries: 각 2/4/24/48시간의 conditionalGateConnectionFraction, 첫 게이트 도달 개수, ETA p10/p50/p90, 입자 상태 수
-- snapshots: 시간별 점유 격자를 8방향으로 군집화한 GeoJSON FeatureCollection<MultiPolygon>
-- particleTrajectories: 입자별 경로, 최종 상태, 첫 게이트 도달시각
-- diagnostics: 해류 범위 누락, 해안선·수심 통과 거절, 살아 있는 입자 없음 등의 계산 근거
-
-conditionalGateConnectionFraction은 시뮬레이션 입자 중 감시 게이트를 처음 교차한 비율입니다. 막힘 확률, 시설 위험도, 생물량, 실제 취수구 도달 여부로 해석하면 안 됩니다.
-
-입자가 해류 범위 밖이면 outside-flow-coverage, 육지·얕은 수역·지형 데이터 범위 밖이면 각각 대응하는 종료 상태가 됩니다. 엔진은 누락 데이터를 정지 해류나 열린 바다로 추정하지 않습니다.
-
-## 간단한 사용 예
+## 가장 작은 입력 예
 
 ~~~ts
-const result = simulateConditionalConnectivity({
-  seed: {
-    observedAt: '2026-08-23T00:00:00.000Z',
+const result = calculateRiskZone({
+  observation: {
+    observedAt: '2026-08-23T00:00:00Z',
     species: 'jellyfish',
     geometry: { kind: 'point', position: [129, 37] },
     depthMeters: 1,
@@ -85,8 +52,27 @@ const result = simulateConditionalConnectivity({
     ensembleSize: 100,
     positionUncertaintyMeters: 500,
   },
-  offshoreFlow: romsAdapter,
-  navigability: coastAdapter,
+
+  offshoreCurrents: [
+    {
+      issuedAt: '2026-08-23T00:00:00Z',
+      validAt: '2026-08-23T00:00:00Z',
+      longitude: 129,
+      latitude: 37,
+      depthMeters: 1,
+      speedMetersPerSecond: 0.8,
+      directionDegrees: 90,
+      directionConvention: 'toward',
+    },
+    // 다음 유효시각 행들
+  ],
+
+  coast: {
+    landPolygons: [],
+    bathymetryPoints: [{ longitude: 129, latitude: 37, depthMeters: 30 }],
+    minimumWaterDepthMeters: 3,
+  },
+
   gate: {
     kind: 'endpoints',
     start: [129.1, 36.98],
@@ -97,4 +83,41 @@ const result = simulateConditionalConnectivity({
 });
 ~~~
 
-설계 결정과 세부 입력·오류 처리 기준은 docs/superpowers/specs/2026-08-23-nuclear-intake-risk-zone-design.md에서 확인할 수 있습니다.
+해류 행은 이미 u/v가 있다면 uMetersPerSecond와 vMetersPerSecond를 넣으면 됩니다. 유향·유속만 있다면 speedMetersPerSecond, directionDegrees, directionConvention을 넣습니다.
+
+- directionConvention: toward는 향하는 방향, from은 불어오거나 흘러오는 방향입니다.
+- 유향의 기준이 데이터마다 다를 수 있으므로, 이 값을 확인하지 못하면 계산하지 말고 원본 메타데이터를 먼저 확인합니다.
+
+## 연안 조류
+
+nearshore는 취수구 주변에만 더 상세한 조류 자료가 있을 때 넣습니다.
+
+~~~ts
+nearshore: {
+  zone: {
+    kind: 'polygon',
+    rings: [[[129.05, 36.95], [129.15, 36.95], [129.15, 37.05], [129.05, 37.05], [129.05, 36.95]]],
+  },
+  currents: nearshoreCurrentRows,
+  mode: 'replace',
+}
+~~~
+
+기본 mode는 replace입니다. 기본 해류와 연안 조류를 자동으로 더하지 않습니다. residualAdd는 연안 데이터가 기본 해류에 포함되지 않은 잔차라는 것이 확인된 경우에만 isResidual: true와 함께 사용합니다.
+
+## 수심·해안선
+
+landPolygons는 [폴리곤][링][좌표] 구조입니다. 수심 점은 가장 가까운 값을 사용하고, 기본적으로 5km보다 멀면 데이터 범위 밖으로 처리합니다. 해안선, 얕은 수심, 수심 데이터 범위 밖을 통과하려는 입자는 그 자리에서 종료됩니다. 이 모듈은 빈 수심 데이터를 열린 바다로 간주하지 않습니다.
+
+## 결과
+
+result에는 다음만 보면 됩니다.
+
+- horizonSummaries: 2/4/24/48시간별 게이트 연결 비율과 ETA p10/p50/p90
+- snapshots: 시간별 GeoJSON MultiPolygon 연결영역
+- particleTrajectories: 입자 경로와 종료 상태
+- diagnostics: 해류·수심 범위 누락과 해안선/얕은 수심 거절 이유
+
+conditionalGateConnectionFraction은 시뮬레이션 입자 중 가상 게이트를 처음 지난 비율입니다. 실제 막힘 확률이 아닙니다.
+
+더 큰 예시는 examples/conditional-connectivity.ts에 있습니다. 내부 계산 모듈은 고급 보정이나 별도 API 어댑터가 필요할 때만 사용하면 됩니다.

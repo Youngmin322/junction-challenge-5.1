@@ -20,3 +20,11 @@ export { CoastAndBathymetryProvider } from './risk-zone/navigability.js';
 export type { BathymetrySampler, CoastAndBathymetryOptions } from './risk-zone/navigability.js';
 export { buildConnectivityRegions } from './risk-zone/regions.js';
 export { nearestRankPercentile, simulateConditionalConnectivity } from './risk-zone/simulation.js';
+export { calculateRiskZone, normalizePublicCurrentRecord } from './risk-zone/public-data.js';
+export type {
+  PublicBathymetryPoint,
+  PublicCoastData,
+  PublicCurrentRecord,
+  PublicNearshoreData,
+  PublicRiskZoneInput,
+} from './risk-zone/public-data.js';

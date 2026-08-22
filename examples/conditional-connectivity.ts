@@ -1,26 +1,9 @@
-import {
-  simulateConditionalConnectivity,
-  type FlowFieldProvider,
-  type NavigabilityProvider,
-} from '../src/index.js';
+import { calculateRiskZone } from '../src/index.js';
 
 const observedAt = '2026-08-23T00:00:00.000Z';
 
-const eastwardCurrent: FlowFieldProvider = {
-  velocityAt: ({ validAt }) => ({
-    uMetersPerSecond: 1,
-    vMetersPerSecond: 0,
-    sourceTime: new Date(observedAt),
-    validAt,
-  }),
-};
-
-const openWater: NavigabilityProvider = {
-  canTraverse: () => ({ passable: true }),
-};
-
-const result = simulateConditionalConnectivity({
-  seed: {
+const result = calculateRiskZone({
+  observation: {
     observedAt,
     species: 'jellyfish',
     geometry: { kind: 'point', position: [129, 37] },
@@ -29,8 +12,34 @@ const result = simulateConditionalConnectivity({
     ensembleSize: 3,
     positionUncertaintyMeters: 200,
   },
-  offshoreFlow: eastwardCurrent,
-  navigability: openWater,
+  offshoreCurrents: [
+    {
+      issuedAt: observedAt,
+      validAt: observedAt,
+      longitude: 129,
+      latitude: 37,
+      depthMeters: 1,
+      speedMetersPerSecond: 1,
+      directionDegrees: 90,
+      directionConvention: 'toward',
+    },
+    {
+      issuedAt: observedAt,
+      validAt: '2026-08-23T02:00:00.000Z',
+      longitude: 129,
+      latitude: 37,
+      depthMeters: 1,
+      speedMetersPerSecond: 1,
+      directionDegrees: 90,
+      directionConvention: 'toward',
+    },
+  ],
+  coast: {
+    landPolygons: [],
+    bathymetryPoints: [{ longitude: 129, latitude: 37, depthMeters: 30 }],
+    minimumWaterDepthMeters: 3,
+    maximumBathymetryLookupMeters: 10_000,
+  },
   gate: {
     kind: 'endpoints',
     start: [129.04, 36.995],
