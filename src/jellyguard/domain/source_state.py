@@ -161,6 +161,29 @@ class PublicDataClient:
     # coasts. 16LTC14 Ulsan New Port is the northernmost one and still sits roughly 180 km
     # south of Hanul, so this source is a convention reference, never a Hanul field.
     CRNT_FCST_REFERENCE_OBS_CODE = "16LTC14"
+    KHOA_HF_ENDPOINT = "https://apis.data.go.kr/1192136/hfCurrent/GetHFCurrentApiService"
+    # Exhaustively probed: exactly these 13 obsCode values are accepted by
+    # GetHFCurrentApiService, everything else returns INVALID_REQUEST_PARAMETER_ERROR.
+    # None of them sit anywhere near Hanul (37.05N, 129.42E) -- the closest, HF_0071
+    # (Pohang harbour), is still ~120 km south. So this fetch is 13 southern/western-coast
+    # reference points, never a Hanul field, regardless of how many stations answer.
+    HF_STATION_CODES: ClassVar[tuple[str, ...]] = (
+        "HF_0039",  # 여수해만
+        "HF_0040",  # 부산항신항
+        "HF_0041",  # 대한해협
+        "HF_0063",  # 울산항
+        "HF_0064",  # 광양항
+        "HF_0065",  # 여수광양항
+        "HF_0069",  # 인천항
+        "HF_0070",  # 태안대산
+        "HF_0071",  # 포항항
+        "HF_0073",  # 동해남부 (observed values are sometimes reported as null)
+        "HF_0074",  # 목포항외측
+        "HF_0075",  # 목포항내측
+        "HF_0076",  # 군산항
+    )
+    HANUL_LAT = 37.05
+    HANUL_LON = 129.42
     ROMS_HANUL_BBOX: ClassVar[dict[str, float]] = {
         # Wider than the transport domain for two reasons. Bilinear sampling needs all
         # four surrounding points, so a field clipped to the domain strands every edge
@@ -192,7 +215,23 @@ class PublicDataClient:
             return self._fetch_khoa_roms()
         if source_id == "khoa_crnt_fcst_reference":
             return self._fetch_khoa_crnt_fcst()
+        if source_id == "khoa_hf_current_reference":
+            return self._fetch_khoa_hf_current()
         raise LookupError(source_id)
+
+    @staticmethod
+    def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+        """Great-circle distance in km, used only to state numerically how far a
+        reference point sits from Hanul -- never to imply that distance is small
+        enough to matter for coverage."""
+        from math import asin, cos, radians, sin, sqrt
+
+        r_earth_km = 6371.0088
+        p1, p2 = radians(lat1), radians(lat2)
+        dphi = radians(lat2 - lat1)
+        dlambda = radians(lon2 - lon1)
+        a = sin(dphi / 2) ** 2 + cos(p1) * cos(p2) * sin(dlambda / 2) ** 2
+        return 2 * r_earth_km * asin(sqrt(a))
 
     def _client(self) -> httpx.Client:
         return httpx.Client(
@@ -623,6 +662,100 @@ class PublicDataClient:
         record["distance_note"] = "nearest_forecast_point_is_not_near_hanul"
         return record
 
+    def _fetch_khoa_hf_current(self) -> dict[str, Any]:
+        """Fetch KHOA's real-time HF-radar current stations, as southern/western-coast
+        context points -- never as a Hanul field.
+
+        There are exactly 13 valid ``obsCode`` values for this operation (probed
+        exhaustively; any other code is rejected by the provider) and every one of them
+        sits well south or west of Hanul, so no amount of station coverage here adds up
+        to area-field coverage at the plant. Each station is read as a single snapshot
+        row (``numOfRows=1``), the same shape as ``_fetch_khoa_points`` -- this endpoint
+        actually paginates a small local mesh per station, but claiming that mesh as a
+        field would repeat the mistake the now-permanently-rejected
+        ``khoa_hf_current_regression`` source made, so only one representative point per
+        station is kept. ``crdir``/``crsp`` are preserved verbatim, including when the
+        provider reports them as null (observed live for HF_0073) -- a null observation
+        is still a row, not a reason to drop the station from the batch.
+        """
+        rows: list[dict[str, Any]] = []
+        status_code = 200
+        result_code = "00"
+        started_at = time.monotonic()
+        with self._client() as client:
+            for station_code in self.HF_STATION_CODES:
+                if time.monotonic() - started_at >= self.settings.live_budget_s:
+                    raise TimeoutError("live request budget exceeded")
+                response = self._get(
+                    client,
+                    self.KHOA_HF_ENDPOINT,
+                    params={
+                        "serviceKey": self.settings.khoa_key,
+                        "type": "json",
+                        "obsCode": station_code,
+                        "numOfRows": 1,
+                        "pageNo": 1,
+                    },
+                )
+                status_code = response.status_code
+                if response.status_code in {401, 403}:
+                    raise PermissionError("upstream authorization rejected")
+                response.raise_for_status()
+                payload = response.json()
+                header = payload.get("header") or {}
+                result_code = str(header.get("resultCode", ""))
+                if result_code and result_code != "00":
+                    if result_code in {"20", "30", "31", "32"}:
+                        raise PermissionError("upstream authorization rejected")
+                    if result_code == "03":
+                        continue
+                    raise ValueError(f"provider result {result_code}")
+                items = ((payload.get("body") or {}).get("items") or {}).get("item") or []
+                if isinstance(items, dict):
+                    items = [items]
+                for item in items:
+                    lat, lon = item.get("lat"), item.get("lot")
+                    rows.append(
+                        {
+                            "station_code": station_code,
+                            "station_name": item.get("obsvtrNm"),
+                            "lat": lat,
+                            "lon": lon,
+                            "observed_at": item.get("obsrvnDt"),
+                            "current_direction": item.get("crdir"),
+                            "current_speed": item.get("crsp"),
+                            "crdir_convention": "UNVERIFIED",
+                            "distance_to_hanul_km": (
+                                round(
+                                    self._haversine_km(
+                                        float(lat), float(lon), self.HANUL_LAT, self.HANUL_LON
+                                    ),
+                                    1,
+                                )
+                                if lat is not None and lon is not None
+                                else None
+                            ),
+                        }
+                    )
+        if not rows:
+            raise ProviderNoDataError("no valid rows")
+        issued_at = self._latest_issued_at(
+            [row.get("observed_at") for row in rows],
+            assume_tz=ZoneInfo("Asia/Seoul"),
+        )
+        record = self._record(
+            "khoa_hf_current_reference",
+            rows,
+            status_code,
+            result_code or "00",
+            self.KHOA_HF_ENDPOINT,
+            issued_at=issued_at,
+            request_spec={"station_codes": list(self.HF_STATION_CODES)},
+        )
+        record["reference_only"] = True
+        record["distance_note"] = "no_station_is_near_hanul"
+        return record
+
     def _record(
         self,
         source_id: str,
@@ -869,4 +1002,5 @@ class SourceResolver:
             "khoa_roms_live": self.settings.khoa_key,
             "nifs_jelly_detail2_unverified": self.settings.nifs_jelly_key,
             "khoa_crnt_fcst_reference": self.settings.khoa_key,
+            "khoa_hf_current_reference": self.settings.khoa_key,
         }.get(source_id)

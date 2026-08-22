@@ -31,13 +31,19 @@ def service():
     )
 
 
-def test_registry_contains_approved_thirteen_sources():
-    assert len(SOURCE_REGISTRY) == 13
+def test_registry_contains_approved_fourteen_sources():
+    assert len(SOURCE_REGISTRY) == 14
     assert "nifs_jelly_catalog" in SOURCE_REGISTRY
     assert "khoa_roms_blocked_fixture" in SOURCE_REGISTRY
     # A direction reference is not a field candidate; it must never be a transport input.
     assert SOURCE_REGISTRY["khoa_crnt_fcst_reference"].source_class == "direction_reference"
     assert SOURCE_REGISTRY["khoa_crnt_fcst_reference"].optional is True
+    # Same rule for the HF-radar reference: 13 real stations, none near Hanul, so it
+    # must stay a context reference and never a field candidate.
+    assert SOURCE_REGISTRY["khoa_hf_current_reference"].source_class == "direction_reference"
+    assert SOURCE_REGISTRY["khoa_hf_current_reference"].optional is True
+    # The pre-existing, permanently-rejected "HF grid as a Hanul field" path is untouched.
+    assert SOURCE_REGISTRY["khoa_hf_current_regression"].source_class == "field_fixture"
 
 
 def test_catalog_is_context_only_and_has_no_observation_fields():

@@ -427,3 +427,154 @@ def test_khoa_crnt_fcst_preserves_textual_direction_and_unverified_units(tmp_pat
     assert record["issued_at"] is None
     assert record["reference_only"] is True
     assert record["request_spec"]["obs_code"] == "16LTC14"
+
+
+def _hf_item(name, lat, lon, crdir=200.0, crsp=5.0, observed_at="2026-08-23 06:00"):
+    return {
+        "obsvtrNm": name,
+        "lat": lat,
+        "lot": lon,
+        "obsrvnDt": observed_at,
+        "crdir": crdir,
+        "crsp": crsp,
+    }
+
+
+def test_khoa_hf_current_sweeps_all_13_known_stations(tmp_path, monkeypatch):
+    from jellyguard.domain.source_state import PublicDataClient
+
+    seen = []
+
+    def handler(request):
+        code = request.url.params["obsCode"]
+        seen.append(code)
+        assert request.url.params["numOfRows"] == "1"
+        return httpx.Response(
+            200,
+            json={
+                "header": {"resultCode": "00"},
+                "body": {"items": {"item": _hf_item(code, 36.0, 129.4)}},
+            },
+        )
+
+    current = client(tmp_path, khoa_key="secret")
+    monkeypatch.setattr(
+        current,
+        "_client",
+        lambda: httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    record = current.fetch("khoa_hf_current_reference")
+    assert seen == list(PublicDataClient.HF_STATION_CODES)
+    assert len(seen) == 13
+    assert record["rows_received"] == 13
+    assert record["reference_only"] is True
+    assert all(row["crdir_convention"] == "UNVERIFIED" for row in record["payload"])
+    assert all(row["distance_to_hanul_km"] is not None for row in record["payload"])
+
+
+def test_khoa_hf_current_null_observation_station_is_kept_not_dropped(tmp_path, monkeypatch):
+    """HF_0073 (동해남부) has been observed live to answer with resultCode 00 but
+    crdir/crsp reported as null. The batch must keep that row -- a null observation
+    is still a station that answered, not a reason to make it vanish."""
+
+    def handler(request):
+        code = request.url.params["obsCode"]
+        if code == "HF_0073":
+            item = _hf_item(code, 36.42, 129.66, crdir=None, crsp=None)
+        else:
+            item = _hf_item(code, 36.0, 129.4)
+        return httpx.Response(
+            200, json={"header": {"resultCode": "00"}, "body": {"items": {"item": item}}}
+        )
+
+    current = client(tmp_path, khoa_key="secret")
+    monkeypatch.setattr(
+        current,
+        "_client",
+        lambda: httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    record = current.fetch("khoa_hf_current_reference")
+    assert record["rows_received"] == 13
+    null_row = next(row for row in record["payload"] if row["station_code"] == "HF_0073")
+    assert null_row["current_direction"] is None
+    assert null_row["current_speed"] is None
+    # A null observation still carries a real position, so distance is still computable.
+    assert null_row["distance_to_hanul_km"] is not None
+
+
+@pytest.mark.parametrize("result_code", ["20", "30", "31", "32"])
+def test_khoa_hf_current_provider_auth_codes_are_permission_errors(
+    tmp_path, monkeypatch, result_code
+):
+    current = client(tmp_path, khoa_key="secret")
+    monkeypatch.setattr(
+        current,
+        "_client",
+        lambda: httpx.Client(
+            transport=httpx.MockTransport(
+                lambda _request: httpx.Response(200, json={"header": {"resultCode": result_code}})
+            )
+        ),
+    )
+    with pytest.raises(PermissionError):
+        current.fetch("khoa_hf_current_reference")
+
+
+@pytest.mark.parametrize("status_code", [401, 403])
+def test_khoa_hf_current_http_auth_failure_is_classified(tmp_path, monkeypatch, status_code):
+    current = client(tmp_path, khoa_key="secret")
+    monkeypatch.setattr(
+        current,
+        "_client",
+        lambda: httpx.Client(
+            transport=httpx.MockTransport(lambda _request: httpx.Response(status_code))
+        ),
+    )
+    with pytest.raises(PermissionError):
+        current.fetch("khoa_hf_current_reference")
+
+
+def test_khoa_hf_current_distance_to_hanul_matches_haversine_math(tmp_path, monkeypatch):
+    """Pohang harbour (HF_0071) is at lat 36.01926, lon 129.44425 (live-probed).
+    Hanul is at lat 37.05, lon 129.42. Deriving the great-circle distance directly
+    (not just trusting the adapter) with R = 6371.0088 km gives ~114.6 km, in line
+    with the "closest station, still ~120 km south" fact established by probing."""
+    from math import asin, cos, radians, sin, sqrt
+
+    def expected_km(lat1, lon1, lat2, lon2):
+        r = 6371.0088
+        p1, p2 = radians(lat1), radians(lat2)
+        dphi = radians(lat2 - lat1)
+        dlambda = radians(lon2 - lon1)
+        a = sin(dphi / 2) ** 2 + cos(p1) * cos(p2) * sin(dlambda / 2) ** 2
+        return 2 * r * asin(sqrt(a))
+
+    pohang_lat, pohang_lon = 36.01926, 129.44425
+    expected = expected_km(pohang_lat, pohang_lon, 37.05, 129.42)
+    assert 110 < expected < 120
+
+    def handler(request):
+        code = request.url.params["obsCode"]
+        if code == "HF_0071":
+            item = _hf_item(code, pohang_lat, pohang_lon)
+        else:
+            item = _hf_item(code, 36.0, 129.4)
+        return httpx.Response(
+            200, json={"header": {"resultCode": "00"}, "body": {"items": {"item": item}}}
+        )
+
+    current = client(tmp_path, khoa_key="secret")
+    monkeypatch.setattr(
+        current,
+        "_client",
+        lambda: httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    record = current.fetch("khoa_hf_current_reference")
+    pohang_row = next(row for row in record["payload"] if row["station_code"] == "HF_0071")
+    assert pohang_row["distance_to_hanul_km"] == round(expected, 1)
+
+
+def test_khoa_hf_current_live_budget_stops_before_upstream_call(tmp_path):
+    current = client(tmp_path, khoa_key="secret", live_budget_s=-1)
+    with pytest.raises(TimeoutError, match="budget"):
+        current.fetch("khoa_hf_current_reference")
