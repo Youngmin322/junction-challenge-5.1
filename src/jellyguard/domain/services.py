@@ -575,6 +575,32 @@ class DomainService:
             query_id=self.new_id("QUERY"),
         )
 
+    @staticmethod
+    def _roms_field_facts(grid_summary: dict | None, reason_code: str) -> dict:
+        """Report what the ROMS response actually contained, including why it is unused.
+
+        The field can be present and still be unusable for transport, so availability and
+        usability are separate fields rather than one collapsed flag.
+        """
+        if not grid_summary:
+            return {"available": False, "excluded_reason": reason_code}
+        return {
+            "available": True,
+            "is_area_field": grid_summary.get("is_area_field", False),
+            "cell_count": grid_summary.get("cell_count"),
+            "lat_spacing_deg": grid_summary.get("lat_spacing_deg"),
+            "lon_spacing_deg": grid_summary.get("lon_spacing_deg"),
+            "covered_bbox": grid_summary.get("covered_bbox"),
+            "timestep_count": grid_summary.get("timestep_count"),
+            "valid_from_local": grid_summary.get("valid_from_local"),
+            "valid_to_local": grid_summary.get("valid_to_local"),
+            "issue_time_published": grid_summary.get("issue_time_published"),
+            "depth_class": grid_summary.get("depth_class"),
+            "crdir_convention": grid_summary.get("crdir_convention"),
+            "usable_for_transport": False,
+            "excluded_reason": reason_code,
+        }
+
     def get_field_status(
         self,
         *,
@@ -602,12 +628,40 @@ class DomainService:
             if point_context_available
             else None
         )
-        roms_reason = roms_resolution.public_reason_code or "MODE_NOT_ALLOWED"
+        # A ROMS response that actually arrived is a different fact from a ROMS response
+        # that never came. Both stay out of the transport input, but for different reasons,
+        # and collapsing them would hide that the area field is now in hand.
+        roms_field_available = roms_resolution.state in {
+            SourceState.LIVE_OK,
+            SourceState.LIVE_STALE,
+            SourceState.LIVE_UNKNOWN_AGE,
+            SourceState.CACHED_FRESH,
+            SourceState.CACHED_STALE,
+            SourceState.CACHED_UNKNOWN_AGE,
+        }
+        roms_grid = (
+            (roms_resolution.manifest or {}).get("grid_summary") if roms_field_available else None
+        )
+        roms_is_area_field = bool(roms_grid and roms_grid.get("is_area_field"))
+        if roms_field_available and roms_is_area_field:
+            # Coverage is satisfied; the blocker is now the unverified direction convention.
+            roms_reason = ErrorCode.DIRECTION_UNVERIFIED.value
+            roms_status = CalculationStatus.DEGRADED
+        elif roms_field_available:
+            # The provider answered but returned a single point, which is not a field.
+            roms_reason = ErrorCode.NO_COVERAGE.value
+            roms_status = CalculationStatus.BLOCKED
+        else:
+            roms_reason = roms_resolution.public_reason_code or "MODE_NOT_ALLOWED"
+            roms_status = CalculationStatus.BLOCKED
         components = [
             ComponentStatus(
                 source_id="khoa_roms_live",
                 role="rejected_candidate",
-                status=CalculationStatus.BLOCKED,
+                status=roms_status,
+                source_data_mode=DataMode(roms_resolution.data_mode)
+                if roms_field_available and roms_resolution.data_mode
+                else None,
                 reason_codes=[roms_reason],
                 source_state=roms_resolution.state.value,
             ),
@@ -686,6 +740,7 @@ class DomainService:
                     ],
                     "selected_field_ref": synthetic_refs["B2_current_only"],
                     "synthetic_field_refs": synthetic_refs,
+                    "roms_field": self._roms_field_facts(roms_grid, roms_reason),
                     "point_context": point_resolution.payload if point_context_available else [],
                     "context": [] if not include_context else [{"context_ui_enabled": False}],
                     "request_echo": {
@@ -725,6 +780,7 @@ class DomainService:
             data={
                 "field_candidates": [component.model_dump(mode="json") for component in components],
                 "selected_field_ref": None,
+                "roms_field": self._roms_field_facts(roms_grid, roms_reason),
                 "point_context": point_resolution.payload if point_context_available else [],
                 "context": [],
                 "request_echo": {
