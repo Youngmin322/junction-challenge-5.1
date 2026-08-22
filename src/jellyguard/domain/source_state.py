@@ -162,10 +162,13 @@ class PublicDataClient:
     # south of Hanul, so this source is a convention reference, never a Hanul field.
     CRNT_FCST_REFERENCE_OBS_CODE = "16LTC14"
     ROMS_HANUL_BBOX: ClassVar[dict[str, float]] = {
-        "ymin": 36.99,
-        "ymax": 37.14,
-        "xmin": 129.36,
-        "xmax": 129.48,
+        # Padded one grid cell beyond the transport domain on every side. Bilinear
+        # sampling needs all four surrounding points, so a field clipped to the domain
+        # would strand every particle near the edge with no neighbours to interpolate.
+        "ymin": 36.95,
+        "ymax": 37.18,
+        "xmin": 129.32,
+        "xmax": 129.52,
     }
     ROMS_PAGE_SIZE = 300
     ROMS_MAX_PAGES = 60

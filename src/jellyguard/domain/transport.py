@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -133,42 +134,19 @@ def _advance_rk4(
     )
 
 
-def run_synthetic_transport(
+def _integrate(
     *,
-    seeds: list[dict[str, Any]],
+    members: list[dict[str, Any]],
     grid: DomainGrid,
-    profile_id: str,
     horizons_h: list[int],
-    run_seed: int,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    profile = SYNTHETIC_PROFILES[profile_id]
-    members: list[dict[str, Any]] = []
-    for seed in sorted(seeds, key=lambda item: item["seed_id"]):
-        lon, lat = seed["geometry"]["coordinates"]
-        for row in range(5):
-            for col in range(5):
-                member_lon = lon + (col - 2) * 0.005
-                member_lat = lat + (row - 2) * 0.005
-                members.append(
-                    {
-                        "member_index": len(members),
-                        "seed_id": seed["seed_id"],
-                        "lon": member_lon,
-                        "lat": member_lat,
-                        "terminated_reason": None,
-                        "terminated_at_minutes": None,
-                        "visited_cells": {},
-                        "trajectory": [[member_lon, member_lat]],
-                    }
-                )
+    velocity_at: Callable[[dict[str, Any], float, float, float], tuple[float, float] | None],
+) -> dict[str, list[dict[str, Any]]]:
+    """Step every live member forward, terminating rather than inventing missing velocity.
 
-    member_rngs: list[np.random.Generator] | None = None
-    if profile_id == "B3":
-        member_rngs = [
-            np.random.Generator(np.random.PCG64(child_sequence))
-            for child_sequence in np.random.SeedSequence(run_seed).spawn(len(members))
-        ]
-
+    ``velocity_at`` returns ``None`` when the field cannot answer for that position and
+    time. The member is then terminated with ``field_missing`` instead of being carried
+    forward on a nearest neighbour value.
+    """
     horizon_steps = {hour: hour * 12 for hour in horizons_h}
     snapshots: dict[str, list[dict[str, Any]]] = {}
     dt_seconds = 300.0
@@ -202,17 +180,50 @@ def run_synthetic_transport(
         for member in members:
             if member["terminated_reason"] is not None:
                 continue
-            u_ms = profile["u_ms"]
-            v_ms = profile["v_ms"]
-            if member_rngs is not None:
-                member_rng = member_rngs[member["member_index"]]
-                u_ms += float(member_rng.normal(0.0, profile["sigma_ms"]))
-                v_ms += float(member_rng.normal(0.0, profile["sigma_ms"]))
+            velocity = velocity_at(member, member["lon"], member["lat"], step * dt_seconds)
+            if velocity is None:
+                member["terminated_reason"] = "field_missing"
+                member["terminated_at_minutes"] = elapsed_minutes
+                continue
+            u_ms, v_ms = velocity
             member["lon"], member["lat"] = _advance_rk4(
                 member["lon"], member["lat"], u_ms, v_ms, dt_seconds
             )
             member["trajectory"].append([member["lon"], member["lat"]])
+    return snapshots
 
+
+def _seed_members(seeds: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Spread each seed into a fixed 5x5 member cloud around its reported position."""
+    members: list[dict[str, Any]] = []
+    for seed in sorted(seeds, key=lambda item: item["seed_id"]):
+        lon, lat = seed["geometry"]["coordinates"]
+        for row in range(5):
+            for col in range(5):
+                member_lon = lon + (col - 2) * 0.005
+                member_lat = lat + (row - 2) * 0.005
+                members.append(
+                    {
+                        "member_index": len(members),
+                        "seed_id": seed["seed_id"],
+                        "lon": member_lon,
+                        "lat": member_lat,
+                        "terminated_reason": None,
+                        "terminated_at_minutes": None,
+                        "visited_cells": {},
+                        "trajectory": [[member_lon, member_lat]],
+                    }
+                )
+    return members
+
+
+def _summarize(
+    *,
+    members: list[dict[str, Any]],
+    snapshots: dict[str, list[dict[str, Any]]],
+    grid: DomainGrid,
+    horizons_h: list[int],
+) -> tuple[dict[str, Any], dict[str, Any], int]:
     envelopes: dict[str, dict[str, Any]] = {}
     horizon_summary: dict[str, dict[str, Any]] = {}
     released = len(members)
@@ -253,6 +264,50 @@ def run_synthetic_transport(
             "terminated_by": terminated_by,
         }
 
+    return envelopes, horizon_summary, released
+
+
+def run_synthetic_transport(
+    *,
+    seeds: list[dict[str, Any]],
+    grid: DomainGrid,
+    profile_id: str,
+    horizons_h: list[int],
+    run_seed: int,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    profile = SYNTHETIC_PROFILES[profile_id]
+    members = _seed_members(seeds)
+
+    member_rngs: list[np.random.Generator] | None = None
+    if profile_id == "B3":
+        member_rngs = [
+            np.random.Generator(np.random.PCG64(child_sequence))
+            for child_sequence in np.random.SeedSequence(run_seed).spawn(len(members))
+        ]
+
+    def velocity_at(member: dict[str, Any], _lon: float, _lat: float, _seconds: float):
+        u_ms = profile["u_ms"]
+        v_ms = profile["v_ms"]
+        if member_rngs is not None:
+            member_rng = member_rngs[member["member_index"]]
+            u_ms += float(member_rng.normal(0.0, profile["sigma_ms"]))
+            v_ms += float(member_rng.normal(0.0, profile["sigma_ms"]))
+        return u_ms, v_ms
+
+    snapshots = _integrate(
+        members=members,
+        grid=grid,
+        horizons_h=horizons_h,
+        velocity_at=velocity_at,
+    )
+
+    envelopes, horizon_summary, released = _summarize(
+        members=members,
+        snapshots=snapshots,
+        grid=grid,
+        horizons_h=horizons_h,
+    )
+
     reproducibility = {
         "run_seed": run_seed,
         "rng_algorithm": "PCG64",
@@ -278,6 +333,228 @@ def run_synthetic_transport(
     }
     artifact = {
         "profile_id": profile_id,
+        "horizons_h": horizons_h,
+        "snapshots": snapshots,
+        "members": members,
+        "run_seed": run_seed,
+        "reproducibility": reproducibility,
+    }
+    return public, artifact
+
+
+@dataclass(frozen=True)
+class MeasuredField:
+    """A time-varying velocity field sampled from provider rows, with holes preserved.
+
+    Bilinear interpolation needs all four surrounding grid points. When any of them is
+    absent the sample is refused rather than filled from the nearest neighbour, because a
+    filled hole is indistinguishable from measured water once it reaches a trajectory.
+    """
+
+    field_id: str
+    lats: tuple[float, ...]
+    lons: tuple[float, ...]
+    times: tuple[float, ...]
+    samples: dict[tuple[float, float, float], tuple[float, float]]
+    convention: str
+    start_epoch: float
+
+    @classmethod
+    def from_rows(
+        cls,
+        rows: list[dict[str, Any]],
+        *,
+        field_id: str,
+        convention: str,
+    ) -> MeasuredField:
+        if convention not in {"TOWARD", "FROM"}:
+            raise ValueError("direction convention must be settled before sampling a field")
+        samples: dict[tuple[float, float, float], tuple[float, float]] = {}
+        for row in rows:
+            lat, lon = row.get("lat"), row.get("lon")
+            direction, speed = row.get("current_direction"), row.get("current_speed")
+            epoch = _epoch_seconds(row.get("valid_at"))
+            if None in (lat, lon, direction, speed, epoch):
+                continue
+            radians = math.radians(float(direction))
+            u = float(speed) * math.sin(radians)
+            v = float(speed) * math.cos(radians)
+            if convention == "FROM":
+                u, v = -u, -v
+            samples[(float(lat), float(lon), epoch)] = (u, v)
+        if not samples:
+            raise ValueError("no usable velocity rows")
+        lats = tuple(sorted({key[0] for key in samples}))
+        lons = tuple(sorted({key[1] for key in samples}))
+        times = tuple(sorted({key[2] for key in samples}))
+        return cls(
+            field_id=field_id,
+            lats=lats,
+            lons=lons,
+            times=times,
+            samples=samples,
+            convention=convention,
+            start_epoch=times[0],
+        )
+
+    def sample(self, lon: float, lat: float, elapsed_seconds: float) -> tuple[float, float] | None:
+        when = self.start_epoch + elapsed_seconds
+        time_bracket = _bracket(self.times, when)
+        lat_bracket = _bracket(self.lats, lat)
+        lon_bracket = _bracket(self.lons, lon)
+        if time_bracket is None or lat_bracket is None or lon_bracket is None:
+            return None
+        (time_low, time_high, time_weight) = time_bracket
+        (lat_low, lat_high, lat_weight) = lat_bracket
+        (lon_low, lon_high, lon_weight) = lon_bracket
+
+        corners = []
+        for stamp in (time_low, time_high):
+            plane = []
+            for corner_lat in (lat_low, lat_high):
+                for corner_lon in (lon_low, lon_high):
+                    value = self.samples.get((corner_lat, corner_lon, stamp))
+                    if value is None:
+                        return None
+                    plane.append(value)
+            corners.append(plane)
+
+        def blend(plane: list[tuple[float, float]]) -> tuple[float, float]:
+            south = _mix(plane[0], plane[1], lon_weight)
+            north = _mix(plane[2], plane[3], lon_weight)
+            return _mix(south, north, lat_weight)
+
+        return _mix(blend(corners[0]), blend(corners[1]), time_weight)
+
+
+def _mix(low: tuple[float, float], high: tuple[float, float], weight: float) -> tuple[float, float]:
+    return (
+        low[0] + (high[0] - low[0]) * weight,
+        low[1] + (high[1] - low[1]) * weight,
+    )
+
+
+def _bracket(values: tuple[float, ...], target: float) -> tuple[float, float, float] | None:
+    if not values or target < values[0] or target > values[-1]:
+        return None
+    for index in range(len(values) - 1):
+        low, high = values[index], values[index + 1]
+        if low <= target <= high:
+            span = high - low
+            return low, high, 0.0 if span == 0 else (target - low) / span
+    return values[-1], values[-1], 0.0
+
+
+def _epoch_seconds(stamp: Any) -> float | None:
+    from datetime import datetime
+
+    if not stamp:
+        return None
+    try:
+        return datetime.fromisoformat(str(stamp)).timestamp()
+    except ValueError:
+        return None
+
+
+LIVE_FIELD_PREFIX = "live:"
+
+# Above this share of released members leaving the grid, the computation window is too
+# small to describe the flow and the result must say so instead of reporting a thinned
+# envelope as if it were the whole cloud.
+DOMAIN_EXIT_TOLERANCE = 0.01
+
+
+def parse_live_field_ref(field_ref: str, domain_id: str) -> str:
+    """Return the source id carried by a four-part live field reference."""
+    if not field_ref.startswith(LIVE_FIELD_PREFIX):
+        raise ValueError("field_ref must use the four-part live format")
+    remainder = field_ref.removeprefix(LIVE_FIELD_PREFIX)
+    grid_and_source, separator, validity = remainder.partition(":")
+    if not separator or ":" not in validity:
+        raise ValueError("field_ref must include issued_at and valid_at")
+    prefix = f"{domain_id}."
+    if not grid_and_source.startswith(prefix):
+        raise LookupError("field_ref grid does not match the Hanul domain")
+    source_id = grid_and_source.removeprefix(prefix)
+    if not source_id:
+        raise ValueError("field_ref is missing a source id")
+    return source_id
+
+
+def run_measured_transport(
+    *,
+    seeds: list[dict[str, Any]],
+    grid: DomainGrid,
+    field: MeasuredField,
+    horizons_h: list[int],
+    run_seed: int,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Advect seeds through a measured field, with no stochastic spread.
+
+    A single deterministic forecast carries no spread information of its own, so members
+    differ only by their release position. Calling the result an ensemble would imply an
+    uncertainty estimate that this field cannot support.
+    """
+    members = _seed_members(seeds)
+
+    def velocity_at(_member: dict[str, Any], lon: float, lat: float, seconds: float):
+        return field.sample(lon, lat, seconds)
+
+    snapshots = _integrate(
+        members=members,
+        grid=grid,
+        horizons_h=horizons_h,
+        velocity_at=velocity_at,
+    )
+    envelopes, horizon_summary, released = _summarize(
+        members=members,
+        snapshots=snapshots,
+        grid=grid,
+        horizons_h=horizons_h,
+    )
+    reproducibility = {
+        "run_seed": run_seed,
+        "rng_algorithm": "none",
+        "quantization": {"coordinate_deg": 1e-7, "physical": 1e-6},
+        "float_policy": "float64_rk4_fixed_no_parallel_reduce_sorted_index",
+        "reproducibility_class": "quantized_cross_env",
+    }
+    exit_fraction = {
+        hour: (
+            summary["terminated_by"]["out_of_domain"] / summary["released"]
+            if summary["released"]
+            else 0.0
+        )
+        for hour, summary in horizon_summary.items()
+    }
+    insufficient = sorted(
+        int(hour) for hour, share in exit_fraction.items() if share > DOMAIN_EXIT_TOLERANCE
+    )
+    public = {
+        "profile_id": f"measured:{field.field_id}",
+        "domain_exit_fraction": {hour: round(share, 4) for hour, share in exit_fraction.items()},
+        "domain_exit_tolerance": DOMAIN_EXIT_TOLERANCE,
+        "domain_insufficient_horizons": insufficient,
+        "field_constants": None,
+        "field_source": {
+            "field_id": field.field_id,
+            "crdir_convention": field.convention,
+            "convention_basis": "check_based_provider_unconfirmed",
+            "cell_count": len(field.samples) // max(len(field.times), 1),
+            "timestep_count": len(field.times),
+            "interpolation": "bilinear_space_linear_time_no_gap_fill",
+        },
+        "released": released,
+        "horizon_summary": horizon_summary,
+        "envelopes": envelopes,
+        "physical_realism": "surface_only_measured_field",
+        "coastline_basis": "none",
+        "spread_parameterization": None,
+        "orchestrator": "mock",
+        "reproducibility": reproducibility,
+    }
+    artifact = {
+        "profile_id": public["profile_id"],
         "horizons_h": horizons_h,
         "snapshots": snapshots,
         "members": members,

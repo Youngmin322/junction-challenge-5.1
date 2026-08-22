@@ -348,3 +348,82 @@ def test_ready_run_artifact_survives_service_restart(tmp_path):
     )
     assert intersection.status == "READY"
     assert (tmp_path / "artifacts.jsonl").is_file()
+
+
+def _measured_rows(bearing_degrees=0.0, speed=0.2):
+    """A uniform field covering a small lat/lon box for two hours."""
+    rows = []
+    for lat in (37.05, 37.08, 37.11):
+        for lon in (129.40, 129.44, 129.48):
+            for hour in range(3):
+                rows.append(
+                    {
+                        "lat": lat,
+                        "lon": lon,
+                        "valid_at": f"2026-08-22 {hour:02d}:00:00",
+                        "current_direction": bearing_degrees,
+                        "current_speed": speed,
+                        "water_temperature": 20.0,
+                    }
+                )
+    return rows
+
+
+def test_measured_field_refuses_to_fill_gaps_between_grid_points():
+    from jellyguard.domain.transport import MeasuredField
+
+    # Drop one corner cell so some squares stay complete and one is holed.
+    rows = [row for row in _measured_rows() if not (row["lat"] == 37.11 and row["lon"] == 129.48)]
+    field = MeasuredField.from_rows(rows, field_id="test", convention="TOWARD")
+
+    # A position whose surrounding square is complete still samples.
+    assert field.sample(129.42, 37.06, 0.0) is not None
+    # The square missing one corner is refused rather than filled from a neighbour.
+    assert field.sample(129.45, 37.09, 0.0) is None
+    # Outside the field footprint there is nothing to interpolate.
+    assert field.sample(129.90, 37.06, 0.0) is None
+    # Beyond the last forecast hour the field cannot answer either.
+    assert field.sample(129.42, 37.06, 10 * 3600) is None
+
+
+def test_measured_field_flips_components_with_the_convention():
+    from jellyguard.domain.transport import MeasuredField
+
+    north = MeasuredField.from_rows(_measured_rows(0.0), field_id="t", convention="TOWARD")
+    same_rows_from = MeasuredField.from_rows(_measured_rows(0.0), field_id="t", convention="FROM")
+    u_toward, v_toward = north.sample(129.42, 37.06, 0.0)
+    u_from, v_from = same_rows_from.sample(129.42, 37.06, 0.0)
+    assert v_toward > 0 and v_from < 0
+    assert u_toward == pytest.approx(-u_from)
+
+
+def test_measured_field_requires_a_settled_convention():
+    from jellyguard.domain.transport import MeasuredField
+
+    with pytest.raises(ValueError, match="convention"):
+        MeasuredField.from_rows(_measured_rows(), field_id="t", convention="INCONCLUSIVE")
+
+
+def test_measured_transport_reports_domain_exit_instead_of_a_clipped_envelope():
+    from jellyguard.domain.transport import DomainGrid, MeasuredField, run_measured_transport
+
+    grid = DomainGrid(
+        domain_id="TEST_DOMAIN",
+        lon_min=129.40,
+        lon_max=129.48,
+        lat_min=37.05,
+        lat_max=37.11,
+        spacing_deg=0.01,
+    )
+    field = MeasuredField.from_rows(_measured_rows(0.0, 0.5), field_id="t", convention="TOWARD")
+    seeds = [{"seed_id": "S1", "geometry": {"type": "Point", "coordinates": [129.44, 37.10]}}]
+
+    public, _ = run_measured_transport(
+        seeds=seeds, grid=grid, field=field, horizons_h=[1, 2], run_seed=1
+    )
+
+    # A fast northward flow pushes the cloud past the northern edge within the window.
+    assert public["domain_insufficient_horizons"]
+    assert public["domain_exit_fraction"]["2"] > public["domain_exit_tolerance"]
+    assert public["field_source"]["crdir_convention"] == "TOWARD"
+    assert public["field_constants"] is None
