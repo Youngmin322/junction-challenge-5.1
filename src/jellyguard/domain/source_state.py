@@ -90,6 +90,11 @@ TTL_SECONDS = {
     # ROMS is an hourly surface forecast; issued_at is the first forecast hour, so a run
     # stays usable for a while after release but must not be presented as a nowcast.
     "khoa_roms_live": (6 * 3600, 24 * 3600),
+    # hfCurrent and crntFcstTime are reference-only points, never a transport input, so a
+    # generous TTL is safe -- staleness here only affects a context badge, not a physics
+    # decision. Both providers omit a model run time the way ROMS does.
+    "khoa_hf_current_reference": (6 * 3600, 24 * 3600),
+    "khoa_crnt_fcst_reference": (6 * 3600, 24 * 3600),
     "historical_observation_fixture": (float("inf"), float("inf")),
     "nifs_redtide_list": (7 * 86400, 30 * 86400),
     "nifs_soo_list": (7 * 86400, 30 * 86400),
@@ -184,6 +189,10 @@ class PublicDataClient:
     )
     HANUL_LAT = 37.05
     HANUL_LON = 129.42
+    # Wolsong/Shin-Wolsong (Gyeongju) is the other Gyeongbuk plant this track covers.
+    # Kori/Saeul (Busan) and Hanbit (Jeonnam) are outside Gyeongbuk and out of scope.
+    WOLSONG_LAT = 35.7146
+    WOLSONG_LON = 129.4750
     ROMS_HANUL_BBOX: ClassVar[dict[str, float]] = {
         # Wider than the transport domain for two reasons. Bilinear sampling needs all
         # four surrounding points, so a field clipped to the domain strands every edge
@@ -395,6 +404,22 @@ class PublicDataClient:
             "nifs_redtide_list": self.settings.nifs_redtide_key,
             "nifs_soo_list": self.settings.nifs_soo_key,
         }.get(source_id)
+
+    def _gyeongbuk_plant_distances(self, lat: Any, lon: Any) -> dict[str, Any]:
+        """Report this HF station's distance to Wolsong only.
+
+        None of the 13 live HF stations are near Hanul (closest is 71 km), so a
+        Hanul-distance field here would only ever say "far" without pointing at
+        anything actionable. Wolsong is the closer Gyeongbuk plant for this source
+        (Pohang Port, HF_0071, is 34 km away) and is reported instead.
+        """
+        if lat is None or lon is None:
+            return {"distance_to_wolsong_km": None}
+        return {
+            "distance_to_wolsong_km": round(
+                self._haversine_km(float(lat), float(lon), self.WOLSONG_LAT, self.WOLSONG_LON), 1
+            )
+        }
 
     def _fetch_khoa_points(self) -> dict[str, Any]:
         rows: list[dict[str, Any]] = []
@@ -725,16 +750,7 @@ class PublicDataClient:
                             "current_direction": item.get("crdir"),
                             "current_speed": item.get("crsp"),
                             "crdir_convention": "UNVERIFIED",
-                            "distance_to_hanul_km": (
-                                round(
-                                    self._haversine_km(
-                                        float(lat), float(lon), self.HANUL_LAT, self.HANUL_LON
-                                    ),
-                                    1,
-                                )
-                                if lat is not None and lon is not None
-                                else None
-                            ),
+                            **self._gyeongbuk_plant_distances(lat, lon),
                         }
                     )
         if not rows:
