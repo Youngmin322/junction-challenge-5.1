@@ -1,5 +1,5 @@
 import type { FeatureCollection, Polygon, Position as GeoJsonPosition } from 'geojson';
-import { pointInPolygon } from '../../src/risk-zone/geo.js';
+import { createLocalProjection, pointInPolygon } from '../../src/risk-zone/geo.js';
 import type {
   FlowFieldProvider,
   NavigabilityProvider,
@@ -9,13 +9,21 @@ import type {
 } from '../../src/risk-zone/types.js';
 
 const observedAt = '2026-08-23T00:00:00.000Z';
-const seedPosition: Position = [129.15, 37.15];
+const fictionalSeedPosition: Position = [129.15, 37.15];
+
+export const HANUL_SITE_POSITION: Position = [129.38301, 37.0931];
+export const HANUL_INTAKE_POSITION: Position = [129.397, 37.0931];
+export const HANUL_OFFSHORE_SEED_POSITION: Position = [129.56, 37.105];
 
 export interface DemoScenario {
-  id: 'eastward-spread' | 'tidal-turn' | 'coastal-interception';
+  id: 'hanul-approach' | 'eastward-spread' | 'tidal-turn' | 'coastal-interception';
   name: string;
   description: string;
   isFictional: true;
+  dataMode: 'synthetic';
+  mapContext: 'real-site' | 'fictional-site';
+  sitePosition: Position;
+  intakePosition: Position;
   input: SimulationInput;
   coast: FeatureCollection<Polygon>;
 }
@@ -70,7 +78,13 @@ const shallowRings = fictionalCoast.features
   .filter((feature) => feature.properties?.kind === 'fictional-shallow-water')
   .map((feature) => toPositionRing(feature.geometry.coordinates[0]!));
 
+const noSyntheticConstraints: FeatureCollection<Polygon> = {
+  type: 'FeatureCollection',
+  features: [],
+};
+
 export const demoScenarios: DemoScenario[] = [
+  createHanulScenario(),
   createScenario({
     id: 'eastward-spread',
     name: '동쪽 확산',
@@ -118,12 +132,16 @@ function createScenario(args: {
     name: args.name,
     description: args.description,
     isFictional: true,
+    dataMode: 'synthetic',
+    mapContext: 'fictional-site',
+    sitePosition: [129.305, 37.155],
+    intakePosition: [129.31, 37.155],
     coast: fictionalCoast,
     input: {
       seed: {
         observedAt,
         species: 'fictional-jellyfish-cluster',
-        geometry: { kind: 'point', position: seedPosition },
+        geometry: { kind: 'point', position: fictionalSeedPosition },
         depthMeters: 1,
         confidence: 0.75,
         ensembleSize: 48,
@@ -146,6 +164,84 @@ function createScenario(args: {
         randomSeed: 20260823,
       },
     },
+  };
+}
+
+function createHanulScenario(): DemoScenario {
+  return {
+    id: 'hanul-approach',
+    name: '한울원전 접근 흐름',
+    description: '울진 한울원전 동쪽 해상에서 관측된 더미 군집이 합성 해류를 따라 취수구 감시선으로 접근하는 시나리오입니다.',
+    isFictional: true,
+    dataMode: 'synthetic',
+    mapContext: 'real-site',
+    sitePosition: HANUL_SITE_POSITION,
+    intakePosition: HANUL_INTAKE_POSITION,
+    coast: noSyntheticConstraints,
+    input: {
+      seed: {
+        observedAt,
+        species: 'synthetic-jellyfish-cluster',
+        geometry: { kind: 'point', position: HANUL_OFFSHORE_SEED_POSITION },
+        depthMeters: 1,
+        confidence: 0.72,
+        ensembleSize: 72,
+        positionUncertaintyMeters: 1_100,
+      },
+      offshoreFlow: targetSeekingFlow(HANUL_SITE_POSITION),
+      navigability: hanulDemoNavigability(),
+      gate: {
+        kind: 'endpoints',
+        start: [HANUL_INTAKE_POSITION[0], 37.078],
+        end: [HANUL_INTAKE_POSITION[0], 37.108],
+        minDepthMeters: 0,
+        maxDepthMeters: 5,
+      },
+      config: {
+        horizonsHours: [2, 4, 24, 48],
+        timeStepMinutes: 15,
+        snapshotIntervalMinutes: 60,
+        regionCellSizeMeters: 500,
+        randomSeed: 20260823,
+      },
+    },
+  };
+}
+
+function targetSeekingFlow(target: Position): FlowFieldProvider {
+  return {
+    velocityAt: ({ position, validAt }): VelocitySample => {
+      const [towardTargetX, towardTargetY] = createLocalProjection(position).toLocal(target);
+      const distance = Math.hypot(towardTargetX, towardTargetY);
+      const elapsedHours = (validAt.valueOf() - new Date(observedAt).valueOf()) / 3_600_000;
+      if (distance < 250) {
+        return {
+          uMetersPerSecond: -0.08,
+          vMetersPerSecond: 0,
+          sourceTime: new Date(observedAt),
+          validAt,
+        };
+      }
+
+      const speed = 0.24 + 0.025 * Math.sin((elapsedHours / 6) * Math.PI);
+      const crossCurrent = 0.025 * Math.sin(elapsedHours / 3 + (position[1] - 37.1) * 30);
+      const eastUnit = towardTargetX / distance;
+      const northUnit = towardTargetY / distance;
+      return {
+        uMetersPerSecond: speed * eastUnit - crossCurrent * northUnit,
+        vMetersPerSecond: speed * northUnit + crossCurrent * eastUnit,
+        sourceTime: new Date(observedAt),
+        validAt,
+      };
+    },
+  };
+}
+
+function hanulDemoNavigability(): NavigabilityProvider {
+  return {
+    canTraverse: ({ to }) => to[0] < 129.381
+      ? { passable: false, reason: 'land' }
+      : { passable: true },
   };
 }
 

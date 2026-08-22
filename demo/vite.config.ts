@@ -10,5 +10,7 @@ export default defineConfig({
   build: {
     outDir: fileURLToPath(new URL('../dist/demo', import.meta.url)),
     emptyOutDir: true,
+    // MapLibre ships its renderer as one intentionally large browser chunk.
+    chunkSizeWarningLimit: 1_100,
   },
 });

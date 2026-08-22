@@ -1,9 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { demoScenarios, getDemoScenario } from '../../demo/src/scenarios.js';
+import { createLocalProjection } from '../../src/risk-zone/geo.js';
+import {
+  demoScenarios,
+  getDemoScenario,
+  HANUL_SITE_POSITION,
+} from '../../demo/src/scenarios.js';
 
 describe('fictional map scenarios', () => {
-  it('provides three named fictional scenarios with a 48-hour simulation', () => {
+  it('provides Hanul first plus the three explanatory 48-hour scenarios', () => {
     expect(demoScenarios.map((scenario) => scenario.id)).toEqual([
+      'hanul-approach',
       'eastward-spread',
       'tidal-turn',
       'coastal-interception',
@@ -12,8 +18,30 @@ describe('fictional map scenarios', () => {
     for (const scenario of demoScenarios) {
       expect(scenario.isFictional).toBe(true);
       expect(scenario.input.config?.horizonsHours).toEqual([2, 4, 24, 48]);
-      expect(scenario.coast.features.length).toBeGreaterThan(0);
+      expect(scenario.dataMode).toBe('synthetic');
     }
+  });
+
+  it('starts east of Hanul and directs the synthetic current toward the site', () => {
+    const scenario = getDemoScenario('hanul-approach');
+    const seed = scenario.input.seed.geometry.kind === 'point'
+      ? scenario.input.seed.geometry.position
+      : scenario.input.seed.geometry.rings[0][0]!;
+    const velocity = scenario.input.offshoreFlow.velocityAt({
+      position: seed,
+      depthMeters: scenario.input.seed.depthMeters,
+      validAt: new Date(scenario.input.seed.observedAt),
+    });
+    const [towardSiteX, towardSiteY] = createLocalProjection(seed).toLocal(HANUL_SITE_POSITION);
+
+    expect(HANUL_SITE_POSITION).toEqual([129.38301, 37.0931]);
+    expect(seed[0]).toBeGreaterThan(HANUL_SITE_POSITION[0]);
+    expect(scenario.mapContext).toBe('real-site');
+    expect(velocity).not.toBeNull();
+    expect(
+      velocity!.uMetersPerSecond * towardSiteX +
+      velocity!.vMetersPerSecond * towardSiteY,
+    ).toBeGreaterThan(0);
   });
 
   it('turns the tidal scenario flow after four hours', () => {

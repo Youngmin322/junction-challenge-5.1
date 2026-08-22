@@ -17,6 +17,16 @@ npm run build
 npm run example
 ~~~
 
+## 한울원전 웹 데모
+
+더미 관측 군집과 합성 해류가 울진 한울원전 취수구 방향으로 접근하는 과정을 지도에서 볼 수 있습니다.
+
+~~~bash
+npm run demo
+~~~
+
+시간 슬라이더는 해당 시점까지 지나간 격자만 보여주고, 격자 색은 취수구와의 거리(2 km / 5 km / 12 km)를 나타냅니다. 즉 진한 적색은 **합성 경로 중 취수구에 가까운 부분**이지 실제 막힘 확률이 아닙니다. 자세한 화면 의미와 실데이터 교체 위치는 [demo/README.md](./demo/README.md)에 있습니다.
+
 ## 공공데이터를 넣는 단순 구조
 
 ~~~ts
@@ -116,6 +126,7 @@ result에는 다음만 보면 됩니다.
 - horizonSummaries: 2/4/24/48시간별 게이트 연결 비율과 ETA p10/p50/p90
 - snapshots: 시간별 GeoJSON MultiPolygon 연결영역
 - particleTrajectories: 입자 경로와 종료 상태
+- earliestArrivalBands: 경로가 지나간 격자의 최초 도달 시간
 - diagnostics: 해류·수심 범위 누락과 해안선/얕은 수심 거절 이유
 
 conditionalGateConnectionFraction은 시뮬레이션 입자 중 가상 게이트를 처음 지난 비율입니다. 실제 막힘 확률이 아닙니다.

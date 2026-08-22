@@ -3,45 +3,76 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>원전 취수구 조건부 연결영역 시나리오</title>
+    <meta name="theme-color" content="#020617" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <title>한울원전 조건부 접근 우선순위 지도</title>
   </head>
   <body>
     <main class="app-shell">
       <header class="topbar">
         <div>
-          <p class="eyebrow">FICTIONAL DEMO</p>
-          <h1>원전 취수구 조건부 연결영역</h1>
+          <p class="eyebrow">SYNTHETIC CURRENT · HANUL CONTEXT</p>
+          <h1>조건부 접근 우선순위 지도</h1>
         </div>
-        <p class="notice">가상 시나리오 결과이며 실제 위험 확률이 아닙니다.</p>
+        <p class="notice"><span aria-hidden="true"></span> 실제 막힘 확률이 아닌 더미 이동 시나리오</p>
       </header>
 
-      <section class="controls" aria-label="시나리오 제어">
-        <label>
-          <span>시나리오</span>
-          <select id="scenario-select"></select>
-        </label>
-        <label class="timeline-control">
-          <span>도달 시간 <strong id="timeline-value">48시간 이내</strong></span>
-          <input id="timeline" type="range" min="0" max="48" value="48" step="1" />
-        </label>
-        <p id="scenario-description" class="scenario-description"></p>
-      </section>
+      <section class="workspace" aria-label="한울원전 접근 시뮬레이션">
+        <aside class="operations-panel" aria-label="시나리오 제어 및 결과 요약">
+          <div class="control-section">
+            <p class="section-kicker">01 · INPUT</p>
+            <label for="scenario-select">시나리오</label>
+            <select id="scenario-select"></select>
+            <p id="scenario-description" class="scenario-description"></p>
+          </div>
 
-      <section class="map-panel" aria-label="시간대별 조건부 연결영역 지도">
-        <div id="map"></div>
-        <aside class="legend" aria-label="최초 도달 시간 범례">
-          <h2>최초 도달 시간</h2>
-          <ul>
-            <li><span class="swatch swatch-2"></span>2시간 이내</li>
-            <li><span class="swatch swatch-4"></span>2–4시간</li>
-            <li><span class="swatch swatch-24"></span>4–24시간</li>
-            <li><span class="swatch swatch-48"></span>24–48시간</li>
-          </ul>
-          <p>색이 진할수록 더 이른 시점에 도달한 가상 격자입니다.</p>
+          <div class="control-section timeline-control">
+            <div class="control-heading">
+              <label for="timeline">표시 시점</label>
+              <strong id="timeline-value">24시간</strong>
+            </div>
+            <input id="timeline" type="range" min="0" max="48" value="24" step="1" />
+            <div class="timeline-ticks" aria-hidden="true"><span>0h</span><span>24h</span><span>48h</span></div>
+            <p>선택 시간까지 입자가 실제로 지나간 격자와 경로만 표시합니다.</p>
+          </div>
+
+          <div class="control-section" aria-labelledby="legend-title">
+            <p class="section-kicker">02 · APPROACH</p>
+            <h2 id="legend-title">조건부 접근 우선순위</h2>
+            <ul class="legend-list">
+              <li><span class="swatch swatch-immediate"></span><span><strong>즉시 감시</strong><small>취수구 2 km 이내</small></span></li>
+              <li><span class="swatch swatch-near"></span><span><strong>근접 구간</strong><small>2–5 km</small></span></li>
+              <li><span class="swatch swatch-corridor"></span><span><strong>접근 회랑</strong><small>5–12 km</small></span></li>
+              <li><span class="swatch swatch-far"></span><span><strong>외해 연결</strong><small>12 km 초과</small></span></li>
+            </ul>
+            <p class="legend-note">색은 시간이나 확률이 아니라, 이동 경로 중 취수구와의 거리 우선순위를 뜻합니다.</p>
+          </div>
+
+          <div class="status-card" aria-live="polite">
+            <div class="status-row">
+              <span class="status-dot" aria-hidden="true"></span>
+              <strong id="path-status">계산 중</strong>
+            </div>
+            <dl>
+              <div><dt>선택 시점 통과</dt><dd id="connection-value">—</dd></div>
+              <div><dt>더미 ETA</dt><dd id="eta-value">—</dd></div>
+            </dl>
+          </div>
+
+          <p id="disclaimer" class="disclaimer"></p>
         </aside>
-      </section>
 
-      <footer id="disclaimer" class="disclaimer"></footer>
+        <section class="map-panel" aria-label="시간대별 조건부 접근영역 지도">
+          <div id="map"></div>
+          <div id="map-loading" class="map-loading" role="status">지도와 더미 시뮬레이션을 불러오는 중…</div>
+          <div class="map-caption">
+            <span class="seed-key"><i></i> 더미 관측 군집</span>
+            <span class="flow-key"><i></i> 합성 해류</span>
+            <span class="gate-key"><i></i> 가상 감시선</span>
+          </div>
+          <p id="map-context" class="map-context">울진 동해안 · 한울원전 위치 맥락</p>
+        </section>
+      </section>
     </main>
     <script type="module" src="/src/main.ts"></script>
   </body>

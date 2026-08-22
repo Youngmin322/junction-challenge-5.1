@@ -1,4 +1,16 @@
-import type { FeatureCollection, GeoJsonProperties, Geometry } from 'geojson';
+import type { FeatureCollection, GeoJsonProperties, Geometry, Polygon } from 'geojson';
+import {
+  buildApproachPriorityBands,
+  type ApproachPriorityCellProperties,
+} from '../../src/risk-zone/approach-priority.js';
+import type { EarliestArrivalCellProperties, Position } from '../../src/risk-zone/types.js';
+
+export function prepareApproachBands(
+  arrivalBands: FeatureCollection<Polygon, EarliestArrivalCellProperties>,
+  intakePosition: Position,
+): FeatureCollection<Polygon, ApproachPriorityCellProperties> {
+  return buildApproachPriorityBands({ arrivalBands, intakePosition });
+}
 
 export function filterArrivalBands<
   GeometryType extends Geometry,
