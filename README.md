@@ -77,8 +77,10 @@ LIVE 실패 시 fixture나 synthetic으로 조용히 전환되지 않습니다.
 서버를 실행한 뒤 MCP의 고정 6도구 흐름을 점검할 수 있습니다.
 
 ```bash
-uv run python scripts/demo_check.py --client-key "$JELLYGUARD_MCP_CLIENT_KEY"
+uv run python scripts/demo_check.py --client-key mcp-demo-key
 ```
+
+`mcp-demo-key`는 `.env`의 `JELLYGUARD_MCP_CLIENT_KEY`에 설정한 값과 같아야 합니다.
 
 ## 현재 실행 범위
 
