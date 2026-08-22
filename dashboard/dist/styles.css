@@ -76,11 +76,23 @@ td strong { display: block; margin-bottom: 3px; color: #e8f4ff; }
 .seed-glow { fill: rgba(246,180,74,.32); filter: url(#soft-glow); }
 .seed-point { fill: #f6b44a; stroke: #fff0c4; stroke-width: 2; }
 .point-label { fill: #eef8ff; font-size: 11px; font-weight: 750; paint-order: stroke; stroke: #06101d; stroke-width: 4px; }
+.vector-arrow { stroke: #b5a4ff; stroke-width: 2; stroke-linecap: round; fill: none; }
+.vector-head { fill: #b5a4ff; }
+.vector-origin { fill: #e2dbff; }
+.vector-scale-bg { fill: rgba(6,16,29,.82); stroke: #3b3568; stroke-width: 1; }
+.vector-scale-label { fill: #cfc6ff; font-size: 10px; }
+.vector-scale-caption { fill: #8f87bd; font-size: 9px; }
+.vector-note { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; padding: 9px 12px; border: 1px solid #2b3f60; border-radius: 10px; background: rgba(9,24,39,.75); color: #90a6ba; font-size: 10px; line-height: 1.6; }
+.vector-badge { padding: 3px 8px; border-radius: 999px; border: 1px solid #4a4180; background: rgba(140,124,255,.14); color: #c3b8ff; font-size: 9px; font-weight: 700; white-space: nowrap; }
+.vector-note[data-state="WITHHELD_UNVERIFIED_CONVENTION"] { border-color: #6a5322; }
+.vector-note[data-state="WITHHELD_UNVERIFIED_CONVENTION"] .vector-badge { border-color: #8a6c24; background: rgba(246,180,74,.14); color: var(--amber); }
+.vector-note[data-state="NO_FIELD"] { border-color: #5c2f3a; }
+.vector-note[data-state="NO_FIELD"] .vector-badge { border-color: #7d3946; background: rgba(255,107,124,.12); color: var(--red); }
 .plot-empty { position: absolute; inset: 0; display: grid; place-content: center; gap: 5px; text-align: center; color: #8aa1b5; background: rgba(6,16,29,.68); }
 .plot-empty strong { color: #d7e6f3; font-size: 14px; }.plot-empty span { font-size: 11px; }
 .plot-empty[hidden] { display: none; }
 .map-legend { display: flex; gap: 16px; margin-top: 12px; color: #879db1; font-size: 10px; }
-.swatch { width: 11px; height: 11px; border-radius: 3px; }.swatch.seed { background: var(--amber); }.swatch.envelope { background: var(--blue); }.swatch.watch { border: 1px solid var(--cyan); background: rgba(33,212,194,.15); }
+.swatch { width: 11px; height: 11px; border-radius: 3px; }.swatch.vector { background: #b5a4ff; }.swatch.seed { background: var(--amber); }.swatch.envelope { background: var(--blue); }.swatch.watch { border: 1px solid var(--cyan); background: rgba(33,212,194,.15); }
 .intersection-list { display: grid; gap: 8px; margin-bottom: 18px; }
 .intersection-card, .placeholder-card { padding: 12px; border: 1px solid #1b3a55; border-radius: 11px; background: #0a1a2a; }
 .intersection-card h3 { margin: 0 0 8px; font-size: 12px; }

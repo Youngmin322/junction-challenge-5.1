@@ -90,11 +90,15 @@
                   <path d="M 64 0 L 0 0 0 43" fill="none" stroke="#17314d" stroke-width="1" />
                 </pattern>
                 <filter id="soft-glow"><feGaussianBlur stdDeviation="5" /></filter>
+                <marker id="vector-head" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+                  <path d="M 0 0 L 10 5 L 0 10 z" class="vector-head" />
+                </marker>
               </defs>
               <rect x="72" y="42" width="720" height="540" rx="16" class="plot-bg" />
               <rect x="72" y="42" width="720" height="540" rx="16" fill="url(#grid-pattern)" />
               <g id="plot-labels"></g>
               <g id="plot-envelope"></g>
+              <g id="plot-vectors"></g>
               <g id="plot-zones"></g>
               <g id="plot-seeds"></g>
             </svg>
@@ -103,7 +107,12 @@
               <span>자료를 불러온 뒤 실행 버튼을 눌러 주세요.</span>
             </div>
           </div>
+          <div id="vector-note" class="vector-note" data-state="NONE">
+            <span id="vector-badge" class="vector-badge">유속 벡터 상태 확인 전</span>
+            <span id="vector-message">자료를 불러오면 표층 유속 벡터 상태가 표시됩니다.</span>
+          </div>
           <div class="map-legend">
+            <span><i class="swatch vector"></i>표층 유속 벡터 (실측 ROMS)</span>
             <span><i class="swatch seed"></i>합성 해파리 관측 입력</span>
             <span><i class="swatch envelope"></i>조건부 이동 범위</span>
             <span><i class="swatch watch"></i>공개 감시격자</span>
