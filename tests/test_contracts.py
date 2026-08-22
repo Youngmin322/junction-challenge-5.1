@@ -96,6 +96,22 @@ def test_optional_cached_context_does_not_mark_calculation_as_replay():
     assert blocked.effective_mode is None
     assert blocked.replay_dependency is False
     assert blocked.watermark_code is None
+    assert blocked.data["context_mode_set"] == ["CACHED"]
+
+
+def test_dashboard_bootstrap_inherits_source_health_and_fixture_provenance():
+    result = service().dashboard_bootstrap()
+    assert result.status == "DEGRADED"
+    assert result.data["source_status"] == "DEGRADED"
+    fixtures = [item for item in result.data["sources"] if item["provenance_kind"] == "fixture"]
+    assert fixtures
+    assert all(item["freshness"] == "fixture" for item in fixtures)
+
+
+def test_default_roms_exclusion_is_not_misreported_as_auth_failure():
+    result = service().get_field_status(allowed_modes=["CACHED"])
+    roms = next(item for item in result.excluded_sources if item["source_id"] == "khoa_roms_live")
+    assert roms["reason_code"] == "MODE_NOT_ALLOWED"
 
 
 def test_p1_transport_and_intersection_return_conditional_member_results():

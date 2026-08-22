@@ -23,6 +23,44 @@ uv run jellyguard
 없어도 CACHED/SYNTHETIC 계약 테스트와 서버 실행은 가능하며, LIVE 후보는
 자동 대체하지 않고 차단 사유를 반환합니다.
 
+## 구현 결과 확인하기
+
+가장 빠른 확인 경로는 기본 `fixture` 모드입니다. `.env`에는 실제 제공기관 키 대신
+서로 다른 로컬 테스트 키 두 개만 넣어도 됩니다.
+
+```bash
+cp .env.example .env
+# .env에서 아래 두 값만 임의의 서로 다른 값으로 설정
+# JELLYGUARD_LOCAL_REST_KEY=local-demo-key
+# JELLYGUARD_MCP_CLIENT_KEY=mcp-demo-key
+uv sync --dev
+uv run jellyguard
+```
+
+서버가 실행된 상태에서 다음 순서로 확인합니다.
+
+1. 브라우저에서 `http://127.0.0.1:8000/dashboard/`를 엽니다.
+2. 상단 키 입력란에 `.env`의 `JELLYGUARD_LOCAL_REST_KEY` 값을 넣고 연결합니다.
+3. `시나리오 실행`을 누르면 3·6·12시간 이동 envelope와 공개 감시격자 교차가 표시됩니다.
+4. 보라색 `합성/재생` 표시는 실시간 자료가 아닌 고정 재생자료 또는 합성 입력이라는 뜻입니다.
+5. 기본 화면의 `DEGRADED`는 오류가 아니라 선택적 LIVE 소스가 없고 재생자료를 사용 중임을
+   정직하게 드러내는 상태입니다.
+
+REST와 MCP 계약은 별도 터미널에서 확인할 수 있습니다.
+
+```bash
+curl http://127.0.0.1:8000/health
+curl -H 'x-jellyguard-local-key: local-demo-key' \
+  http://127.0.0.1:8000/v1/sources/status
+uv run python scripts/demo_check.py --client-key mcp-demo-key
+uv run pytest -q
+```
+
+`demo_check.py`는 MCP의 고정 6도구를 순서대로 호출해 각 결과의 상태와 digest를
+출력합니다. 실제 LIVE 연결을 확인하려면 `.env`에 제공기관 키를 넣고
+`JELLYGUARD_SOURCE_MODE=live` 및 `JELLYGUARD_LIVE_ENABLED_SOURCES`를 명시해야 합니다.
+LIVE 실패 시 fixture나 synthetic으로 조용히 전환되지 않습니다.
+
 ## 자료 모드와 데모 검증
 
 - `fixture`: 저장소에 포함된 고정 자료와 합성 시나리오로 재현 가능한 데모를 실행합니다.

@@ -90,8 +90,13 @@ function renderSources(sources) {
   $('#source-count').textContent = String(sources.length);
   $('#source-rows').innerHTML = sources.map((source) => {
     const stateName = source.public_reason_code || source.data_mode || 'UNAVAILABLE';
-    const visual = source.data_mode === 'LIVE' || source.freshness === 'fresh' || source.freshness === 'synthetic'
-      ? 'ready' : source.freshness === 'stale' ? 'stale' : 'blocked';
+    const visual = source.freshness === 'synthetic' || source.freshness === 'fixture'
+      ? 'synthetic'
+      : source.data_mode === 'LIVE' || source.freshness === 'fresh'
+        ? 'ready'
+        : source.freshness === 'stale' || source.freshness === 'unknown'
+          ? 'stale'
+          : 'blocked';
     const timestamp = source.issued_at || source.fetched_at || '—';
     return `<tr><td><strong>${escapeHtml(labelForSource(source.source_id))}</strong><span>${escapeHtml(labelForClass(source.source_class))}</span></td><td><span class="source-state ${visual}">${escapeHtml(labelForState(stateName))}</span></td><td>${escapeHtml(shortTime(timestamp))}</td></tr>`;
   }).join('');
@@ -146,7 +151,7 @@ function drawSeeds() {
   const seeds = state.bootstrap?.data.scenario_seeds || [];
   $('#plot-seeds').innerHTML = seeds.map((seed) => {
     const point = project(seed.geometry.coordinates[0], seed.geometry.coordinates[1]);
-    return `<circle class="seed-glow" cx="${point.x}" cy="${point.y}" r="18"/><circle class="seed-point" cx="${point.x}" cy="${point.y}" r="5"/><text class="point-label" x="${point.x + 10}" y="${point.y + 18}">관측 입력</text>`;
+    return `<circle class="seed-glow" cx="${point.x}" cy="${point.y}" r="18"/><circle class="seed-point" cx="${point.x}" cy="${point.y}" r="5"/><text class="point-label" x="${point.x + 10}" y="${point.y + 18}">합성 관측 입력</text>`;
   }).join('');
 }
 
@@ -258,6 +263,8 @@ function labelForState(value) {
     UPSTREAM_UNAVAILABLE: '제공기관 응답 없음',
     SCHEMA_INVALID: '형식 확인 필요',
     STALE_DATA: '최신성 확인 필요',
+    UNKNOWN_AGE: '자료시각 미상',
+    FIXTURE_DATA: '고정 재생자료',
     NO_COMPATIBLE_SOURCE: '사용 가능한 자료 없음',
     MODE_NOT_ALLOWED: '현재 모드 제외',
   })[value] || value;

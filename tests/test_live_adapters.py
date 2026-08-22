@@ -5,7 +5,7 @@ import pytest
 
 from jellyguard.config.settings import Settings
 from jellyguard.domain import source_state
-from jellyguard.domain.source_state import PublicDataClient
+from jellyguard.domain.source_state import ProviderNoDataError, PublicDataClient
 
 NOW = datetime(2026, 8, 23, 2, 0, tzinfo=UTC)
 
@@ -39,6 +39,9 @@ def test_nifs_jelly_list_normalizes_list_and_single_item(tmp_path, monkeypatch, 
     record = current.fetch("nifs_jelly_catalog")
     assert record["rows_received"] == (1 if single_item else 2)
     assert record["payload"][0]["claim_type"] == "context/report_catalog"
+    assert record["issued_at"] == "2026-08-20T00:00:00Z"
+    assert record["request_spec"]["dataset_id"] == "jellyList"
+    assert "key" not in record["request_spec"]
     assert "secret" not in record["redacted_endpoint"]
 
 
@@ -127,6 +130,8 @@ def test_khoa_three_public_stations_are_normalized(tmp_path, monkeypatch):
     record = current.fetch("khoa_tw_recent_hanul")
     assert seen == ["HB_0007", "HB_0008", "HB_0009"]
     assert record["rows_received"] == 3
+    assert record["issued_at"] == "2026-08-23T01:50:00Z"
+    assert record["request_spec"] == {"station_codes": ["HB_0007", "HB_0008", "HB_0009"]}
     assert all(row["crdir_convention"] == "UNVERIFIED" for row in record["payload"])
 
 
@@ -150,9 +155,37 @@ def test_transient_server_failure_is_retried_once(tmp_path, monkeypatch):
         lambda: httpx.Client(transport=httpx.MockTransport(handler)),
     )
     monkeypatch.setattr(source_state.time, "sleep", lambda _seconds: None)
-    record = current.fetch("nifs_jelly_catalog")
+    with pytest.raises(ProviderNoDataError):
+        current.fetch("nifs_jelly_catalog")
     assert calls == 2
-    assert record["rows_received"] == 0
+
+
+@pytest.mark.parametrize(
+    ("result_code", "expected_exception"),
+    [
+        ("20", PermissionError),
+        ("03", ProviderNoDataError),
+        ("99", ValueError),
+    ],
+)
+def test_khoa_provider_result_codes_are_not_all_auth_failures(
+    tmp_path, monkeypatch, result_code, expected_exception
+):
+    current = client(tmp_path, khoa_key="secret")
+    monkeypatch.setattr(
+        current,
+        "_client",
+        lambda: httpx.Client(
+            transport=httpx.MockTransport(
+                lambda _request: httpx.Response(
+                    200,
+                    json={"header": {"resultCode": result_code}, "body": {}},
+                )
+            )
+        ),
+    )
+    with pytest.raises(expected_exception):
+        current.fetch("khoa_tw_recent_hanul")
 
 
 def test_khoa_live_budget_stops_before_upstream_call(tmp_path):

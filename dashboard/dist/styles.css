@@ -54,6 +54,7 @@ td strong { display: block; margin-bottom: 3px; color: #e8f4ff; }
 .source-state { display: inline-flex; align-items: center; gap: 5px; color: #91a8bd; }
 .source-state::before { width: 6px; height: 6px; border-radius: 50%; background: #64748b; content: ""; }
 .source-state.ready::before { background: var(--cyan); }
+.source-state.synthetic::before { background: #a88cff; }
 .source-state.stale::before { background: var(--amber); }
 .source-state.blocked::before { background: var(--red); }
 .empty-cell { padding: 32px 8px; text-align: center; color: #61788e; }
@@ -61,7 +62,7 @@ td strong { display: block; margin-bottom: 3px; color: #e8f4ff; }
 .legend.compact { margin-top: 15px; }
 .legend span { display: inline-flex; align-items: center; gap: 5px; }
 .dot { width: 6px; height: 6px; border-radius: 50%; }
-.dot.ready { background: var(--cyan); }.dot.stale { background: var(--amber); }.dot.blocked { background: var(--red); }
+.dot.ready { background: var(--cyan); }.dot.synthetic { background: #a88cff; }.dot.stale { background: var(--amber); }.dot.blocked { background: var(--red); }
 .map-heading { align-items: end; }
 .controls-inline { display: flex; gap: 8px; }
 .controls-inline select { min-width: 94px; }

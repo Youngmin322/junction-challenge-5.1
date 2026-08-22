@@ -222,28 +222,48 @@ class DomainService:
         resolutions = self.source_resolver.resolve_all(modes)
         usable = {
             SourceState.LIVE_OK,
+            SourceState.LIVE_STALE,
+            SourceState.LIVE_UNKNOWN_AGE,
             SourceState.CACHED_FRESH,
             SourceState.CACHED_STALE,
+            SourceState.CACHED_UNKNOWN_AGE,
+            SourceState.CACHED_FIXTURE,
             SourceState.SYNTHETIC_EXPLICIT,
         }
         components = [
             ComponentStatus(
                 source_id=item.source_id,
                 role="optional_context" if item.optional else "candidate",
-                status=CalculationStatus.READY
-                if item.state in usable
-                else CalculationStatus.BLOCKED,
+                status=(
+                    CalculationStatus.STALE
+                    if item.state in {SourceState.LIVE_STALE, SourceState.CACHED_STALE}
+                    else (
+                        CalculationStatus.DEGRADED
+                        if item.state
+                        in {SourceState.LIVE_UNKNOWN_AGE, SourceState.CACHED_UNKNOWN_AGE}
+                        else (
+                            CalculationStatus.READY
+                            if item.state in usable
+                            else CalculationStatus.BLOCKED
+                        )
+                    )
+                ),
                 selected=item.state in usable,
                 source_data_mode=DataMode(item.data_mode) if item.data_mode else None,
                 reason_codes=[item.public_reason_code] if item.public_reason_code else [],
-                source_state=item.public_reason_code,
+                source_state=item.state.value if include_internal else item.public_reason_code,
             )
             for item in resolutions
         ]
         selected = [item for item in resolutions if item.state in usable]
-        if any(item.state == SourceState.CACHED_STALE for item in selected):
+        if any(
+            item.state in {SourceState.CACHED_STALE, SourceState.LIVE_STALE} for item in selected
+        ):
             status = CalculationStatus.STALE
-        elif any(item.optional and item.state not in usable for item in resolutions):
+        elif any(
+            item.state in {SourceState.CACHED_UNKNOWN_AGE, SourceState.LIVE_UNKNOWN_AGE}
+            for item in selected
+        ) or any(item.optional and item.state not in usable for item in resolutions):
             status = CalculationStatus.DEGRADED
         else:
             status = CalculationStatus.READY
@@ -304,7 +324,7 @@ class DomainService:
         )
         return self._result(
             tool_name="dashboard_bootstrap",
-            status=CalculationStatus.READY,
+            status=CalculationStatus(source_status.status),
             claim_type=ClaimType.DIAGNOSTIC,
             data={
                 "site_id": site_id,
@@ -348,8 +368,12 @@ class DomainService:
         catalog_resolution = self.source_resolver.resolve("nifs_jelly_catalog", modes)
         available_states = {
             SourceState.LIVE_OK,
+            SourceState.LIVE_STALE,
+            SourceState.LIVE_UNKNOWN_AGE,
             SourceState.CACHED_FRESH,
             SourceState.CACHED_STALE,
+            SourceState.CACHED_UNKNOWN_AGE,
+            SourceState.CACHED_FIXTURE,
         }
         candidates = (
             list(observation_resolution.payload or [])
@@ -504,12 +528,21 @@ class DomainService:
             used_modes = list(dict.fromkeys([*used_modes, DataMode.SYNTHETIC]))
         return self._result(
             tool_name="search_observations",
-            status=CalculationStatus.STALE
-            if any(
-                item.state == SourceState.CACHED_STALE
-                for item in (observation_resolution, catalog_resolution)
-            )
-            else CalculationStatus.READY,
+            status=(
+                CalculationStatus.STALE
+                if any(
+                    item.state in {SourceState.CACHED_STALE, SourceState.LIVE_STALE}
+                    for item in resolved_available
+                )
+                else (
+                    CalculationStatus.DEGRADED
+                    if any(
+                        item.state in {SourceState.CACHED_UNKNOWN_AGE, SourceState.LIVE_UNKNOWN_AGE}
+                        for item in resolved_available
+                    )
+                    else CalculationStatus.READY
+                )
+            ),
             claim_type=ClaimType.DIRECT_OBSERVATION,
             data={
                 "records": records,
@@ -554,17 +587,29 @@ class DomainService:
         modes = self._modes(allowed_modes)
         synthetic_allowed = DataMode.SYNTHETIC in modes
         point_resolution = self.source_resolver.resolve("khoa_tw_recent_hanul", modes)
+        roms_resolution = self.source_resolver.resolve("khoa_roms_live", modes)
         point_context_available = point_resolution.state in {
             SourceState.LIVE_OK,
+            SourceState.LIVE_STALE,
+            SourceState.LIVE_UNKNOWN_AGE,
             SourceState.CACHED_FRESH,
             SourceState.CACHED_STALE,
+            SourceState.CACHED_UNKNOWN_AGE,
+            SourceState.CACHED_FIXTURE,
         }
+        direction_warning = (
+            "KHOA 관측점 유향 정의가 검증되지 않아 수송 계산에는 사용하지 않습니다."
+            if point_context_available
+            else None
+        )
+        roms_reason = roms_resolution.public_reason_code or "MODE_NOT_ALLOWED"
         components = [
             ComponentStatus(
                 source_id="khoa_roms_live",
                 role="rejected_candidate",
                 status=CalculationStatus.BLOCKED,
-                reason_codes=[ErrorCode.UPSTREAM_AUTH_FAILED.value],
+                reason_codes=[roms_reason],
+                source_state=roms_resolution.state.value,
             ),
             ComponentStatus(
                 source_id="khoa_hf_current_regression",
@@ -603,7 +648,7 @@ class DomainService:
         ]
         selected: list[dict] = []
         excluded = [
-            {"source_id": "khoa_roms_live", "reason_code": ErrorCode.UPSTREAM_AUTH_FAILED.value},
+            {"source_id": "khoa_roms_live", "reason_code": roms_reason},
             {"source_id": "khoa_hf_current_regression", "reason_code": ErrorCode.NO_COVERAGE.value},
             {
                 "source_id": "khoa_roms_blocked_fixture",
@@ -656,6 +701,7 @@ class DomainService:
                 excluded_sources=excluded,
                 warnings=[
                     "합성 유동장에 의존한 조건부 시나리오입니다. 실제 예보가 아닙니다.",
+                    *([direction_warning] if direction_warning else []),
                     *(
                         [point_resolution.public_reason]
                         if point_resolution.public_reason is not None
@@ -687,12 +733,17 @@ class DomainService:
                     "horizons_h": horizons_h or [3, 6, 12],
                     "include_context": include_context,
                 },
+                "context_mode_set": (
+                    [point_resolution.data_mode]
+                    if point_context_available and point_resolution.data_mode
+                    else []
+                ),
             },
-            status_reasons=[
-                ErrorCode.NO_COMPATIBLE_SOURCE.value,
-                ErrorCode.UPSTREAM_AUTH_FAILED.value,
-                ErrorCode.NO_COVERAGE.value,
-            ],
+            status_reasons=list(
+                dict.fromkeys(
+                    [ErrorCode.NO_COMPATIBLE_SOURCE.value, roms_reason, ErrorCode.NO_COVERAGE.value]
+                )
+            ),
             component_status=components,
             modes=[],
             selected_sources=selected,
@@ -705,6 +756,7 @@ class DomainService:
                     "한울 coverage와 방향 정의가 검증된 면 유동장 또는 명시적으로 허용된 합성 field"
                 ],
             ),
+            warnings=[direction_warning] if direction_warning else [],
             query_id=self.new_id("QUERY"),
         )
 

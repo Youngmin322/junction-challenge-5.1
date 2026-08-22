@@ -31,9 +31,18 @@ def resolver(tmp_path, **settings_overrides):
         **settings_overrides,
     )
     fixtures = {
-        "historical_observation_fixture": fixture_record("historical_observation_fixture"),
-        "nifs_jelly_catalog": fixture_record("nifs_jelly_catalog", "2026-08-20T00:00:00Z"),
-        "khoa_tw_recent_hanul": fixture_record("khoa_tw_recent_hanul"),
+        "historical_observation_fixture": {
+            **fixture_record("historical_observation_fixture"),
+            "fixture_checksum": "fixture",
+        },
+        "nifs_jelly_catalog": {
+            **fixture_record("nifs_jelly_catalog", "2026-08-20T00:00:00Z"),
+            "fixture_checksum": "fixture",
+        },
+        "khoa_tw_recent_hanul": {
+            **fixture_record("khoa_tw_recent_hanul"),
+            "fixture_checksum": "fixture",
+        },
         "synthetic_field": fixture_record("synthetic_field"),
     }
     return SourceResolver(settings, lambda: NOW, fixtures)
@@ -57,9 +66,9 @@ def test_every_source_rejects_an_unsupported_mode(tmp_path, source_id):
 @pytest.mark.parametrize(
     ("source_id", "expected"),
     [
-        ("historical_observation_fixture", SourceState.CACHED_FRESH),
-        ("nifs_jelly_catalog", SourceState.CACHED_FRESH),
-        ("khoa_tw_recent_hanul", SourceState.CACHED_FRESH),
+        ("historical_observation_fixture", SourceState.CACHED_FIXTURE),
+        ("nifs_jelly_catalog", SourceState.CACHED_FIXTURE),
+        ("khoa_tw_recent_hanul", SourceState.CACHED_FIXTURE),
         ("cached_field", SourceState.CACHE_MISS),
         ("khoa_roms_blocked_fixture", SourceState.CACHE_MISS),
         ("nifs_redtide_list", SourceState.CACHE_MISS),
@@ -131,6 +140,64 @@ def test_khoa_freshness_boundaries(tmp_path, age_seconds, expected):
     assert current.resolve("khoa_tw_recent_hanul", [DataMode.CACHED]).state == expected
 
 
+def test_cache_without_provider_timestamp_is_not_fresh(tmp_path):
+    current = resolver(tmp_path)
+    SourceCache(current.settings.cache_root).append(fixture_record("nifs_jelly_catalog"))
+    result = current.resolve("nifs_jelly_catalog", [DataMode.CACHED])
+    assert result.state == SourceState.CACHED_UNKNOWN_AGE
+    assert result.public_reason_code == "UNKNOWN_AGE"
+    assert result.age_seconds is None
+
+
+@pytest.mark.parametrize(
+    ("issued_at", "expected"),
+    [
+        (NOW.isoformat().replace("+00:00", "Z"), SourceState.LIVE_OK),
+        (
+            (NOW - timedelta(days=20)).isoformat().replace("+00:00", "Z"),
+            SourceState.LIVE_STALE,
+        ),
+        (
+            (NOW - timedelta(days=60)).isoformat().replace("+00:00", "Z"),
+            SourceState.LIVE_EXPIRED,
+        ),
+        (None, SourceState.LIVE_UNKNOWN_AGE),
+    ],
+)
+def test_live_freshness_uses_provider_timestamp(tmp_path, monkeypatch, issued_at, expected):
+    current = resolver(
+        tmp_path,
+        source_mode="live",
+        live_enabled_sources="nifs_jelly_catalog",
+        nifs_jelly_key="configured",
+    )
+    record = {
+        **fixture_record("nifs_jelly_catalog", NOW.isoformat().replace("+00:00", "Z")),
+        "issued_at": issued_at,
+        "adapter_version": "test-live",
+        "request_fingerprint": "f" * 64,
+        "content_checksum": "c" * 64,
+        "rows_received": 1,
+        "pages_received": 1,
+        "partial": False,
+        "failed_pages": [],
+    }
+    monkeypatch.setattr(current.client, "fetch", lambda _source_id: record)
+    assert current.resolve("nifs_jelly_catalog", [DataMode.LIVE]).state == expected
+
+
+def test_enabled_but_unimplemented_live_source_is_reported_without_throwing(tmp_path):
+    current = resolver(
+        tmp_path,
+        source_mode="live",
+        live_enabled_sources="khoa_roms_live",
+        khoa_key="configured",
+    )
+    result = current.resolve("khoa_roms_live", [DataMode.LIVE])
+    assert result.state == SourceState.LIVE_UNSUPPORTED
+    assert result.public_reason_code == "LIVE_NOT_ENABLED"
+
+
 def test_synthetic_is_only_selected_explicitly(tmp_path):
     current = resolver(tmp_path)
     assert current.resolve("synthetic_field", [DataMode.CACHED]).state == SourceState.NOT_REQUESTED
@@ -175,6 +242,7 @@ def test_live_success_is_cached_and_reusable(tmp_path, monkeypatch):
         "pages_received": 1,
         "partial": False,
         "failed_pages": [],
+        "issued_at": NOW.isoformat().replace("+00:00", "Z"),
     }
     monkeypatch.setattr(current.client, "fetch", lambda _source_id: record)
     live = current.resolve("nifs_jelly_catalog", [DataMode.LIVE])

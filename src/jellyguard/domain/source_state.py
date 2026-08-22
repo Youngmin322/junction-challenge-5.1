@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -22,12 +23,19 @@ class SourceState(StrEnum):
     LIVE_DISABLED = "LIVE_DISABLED"
     LIVE_UNCONFIGURED = "LIVE_UNCONFIGURED"
     LIVE_OK = "LIVE_OK"
+    LIVE_STALE = "LIVE_STALE"
+    LIVE_EXPIRED = "LIVE_EXPIRED"
+    LIVE_UNKNOWN_AGE = "LIVE_UNKNOWN_AGE"
+    LIVE_NO_DATA = "LIVE_NO_DATA"
+    LIVE_UNSUPPORTED = "LIVE_UNSUPPORTED"
     LIVE_AUTH_FAILED = "LIVE_AUTH_FAILED"
     LIVE_UNAVAILABLE = "LIVE_UNAVAILABLE"
     LIVE_SCHEMA_INVALID = "LIVE_SCHEMA_INVALID"
     CACHED_FRESH = "CACHED_FRESH"
     CACHED_STALE = "CACHED_STALE"
     CACHED_EXPIRED = "CACHED_EXPIRED"
+    CACHED_UNKNOWN_AGE = "CACHED_UNKNOWN_AGE"
+    CACHED_FIXTURE = "CACHED_FIXTURE"
     CACHE_MISS = "CACHE_MISS"
     SYNTHETIC_EXPLICIT = "SYNTHETIC_EXPLICIT"
     BLOCKED_BY_POLICY = "BLOCKED_BY_POLICY"
@@ -55,8 +63,18 @@ PUBLIC_REASON = {
         ErrorCode.SCHEMA_INVALID,
         "응답 형식이 계약과 다름",
     ),
+    SourceState.LIVE_STALE: (ErrorCode.STALE_DATA, "최신이 아닌 LIVE 자료"),
+    SourceState.LIVE_EXPIRED: (ErrorCode.NO_COVERAGE, "유효시간이 지난 LIVE 자료"),
+    SourceState.LIVE_UNKNOWN_AGE: (ErrorCode.UNKNOWN_AGE, "LIVE 자료시각 미상"),
+    SourceState.LIVE_NO_DATA: (ErrorCode.NO_COVERAGE, "제공기관에 해당 자료 없음"),
+    SourceState.LIVE_UNSUPPORTED: (
+        ErrorCode.LIVE_NOT_ENABLED,
+        "이 실행 프로필에서 지원하지 않는 LIVE 연결",
+    ),
     SourceState.CACHED_STALE: (ErrorCode.STALE_DATA, "최신이 아닌 저장 자료"),
     SourceState.CACHED_EXPIRED: (ErrorCode.NO_COVERAGE, "사용 가능한 자료 없음"),
+    SourceState.CACHED_UNKNOWN_AGE: (ErrorCode.UNKNOWN_AGE, "저장 자료시각 미상"),
+    SourceState.CACHED_FIXTURE: (ErrorCode.FIXTURE_DATA, "고정 재생자료"),
     SourceState.CACHE_MISS: (ErrorCode.NO_COVERAGE, "사용 가능한 자료 없음"),
     SourceState.BLOCKED_BY_POLICY: (
         ErrorCode.NO_COMPATIBLE_SOURCE,
@@ -88,6 +106,7 @@ class SourceResolution:
     age_seconds: int | None = None
     freshness: str | None = None
     license: str = "public-data"
+    provenance_kind: str = "unavailable"
     payload: Any = None
     manifest: dict[str, Any] | None = None
 
@@ -121,6 +140,10 @@ class SourceCache:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+
+class ProviderNoDataError(ValueError):
+    """The provider responded successfully but had no usable rows."""
 
 
 class PublicDataClient:
@@ -183,9 +206,18 @@ class PublicDataClient:
         }
         with self._client() as client:
             response = self._get(client, self.NIFS_ENDPOINT, params=params)
-        return self._normalize_nifs(response)
+        return self._normalize_nifs(
+            response,
+            request_spec={
+                "dataset_id": "jellyList",
+                "sdate": params["sdate"],
+                "edate": params["edate"],
+            },
+        )
 
-    def _normalize_nifs(self, response: httpx.Response) -> dict[str, Any]:
+    def _normalize_nifs(
+        self, response: httpx.Response, *, request_spec: dict[str, Any]
+    ) -> dict[str, Any]:
         if response.status_code in {401, 403}:
             raise PermissionError("upstream authorization rejected")
         response.raise_for_status()
@@ -212,12 +244,20 @@ class PublicDataClient:
             }
             for item in items
         ]
+        if not normalized:
+            raise ProviderNoDataError("no catalog rows")
+        issued_at = self._latest_issued_at(
+            [item.get("registered_at") for item in normalized],
+            assume_tz=UTC,
+        )
         return self._record(
             "nifs_jelly_catalog",
             normalized,
             response.status_code,
             result_code or "00",
             "https://www.nifs.go.kr/api/OpenAPI_json",
+            issued_at=issued_at,
+            request_spec=request_spec,
         )
 
     def _fetch_nifs_context(self, source_id: str, dataset_id: str) -> dict[str, Any]:
@@ -261,12 +301,24 @@ class PublicDataClient:
             }
             for index, item in enumerate(items)
         ]
+        if not normalized:
+            raise ProviderNoDataError("no context rows")
+        issued_at = self._latest_issued_at(
+            [item.get("registered_at") for item in normalized],
+            assume_tz=UTC,
+        )
         return self._record(
             source_id,
             normalized,
             response.status_code,
             result_code or "00",
             "https://www.nifs.go.kr/api/OpenAPI_json",
+            issued_at=issued_at,
+            request_spec={
+                "dataset_id": dataset_id,
+                "sdate": params["sdate"],
+                "edate": params["edate"],
+            },
         )
 
     def _nifs_key(self, source_id: str) -> str | None:
@@ -304,7 +356,11 @@ class PublicDataClient:
                 header = payload.get("header") or {}
                 result_code = str(header.get("resultCode", ""))
                 if result_code and result_code != "00":
-                    raise PermissionError("upstream authorization rejected")
+                    if result_code in {"20", "30", "31", "32"}:
+                        raise PermissionError("upstream authorization rejected")
+                    if result_code == "03":
+                        continue
+                    raise ValueError(f"provider result {result_code}")
                 items = ((payload.get("body") or {}).get("items") or {}).get("item") or []
                 if isinstance(items, dict):
                     items = [items]
@@ -323,13 +379,19 @@ class PublicDataClient:
                         }
                     )
         if not rows:
-            raise ValueError("no valid rows")
+            raise ProviderNoDataError("no valid rows")
+        issued_at = self._latest_issued_at(
+            [row.get("observed_at") for row in rows],
+            assume_tz=ZoneInfo("Asia/Seoul"),
+        )
         return self._record(
             "khoa_tw_recent_hanul",
             rows,
             status_code,
             result_code or "00",
             "https://apis.data.go.kr/1192136/twRecent/GetTWRecentApiService",
+            issued_at=issued_at,
+            request_spec={"station_codes": ["HB_0007", "HB_0008", "HB_0009"]},
         )
 
     def _record(
@@ -339,15 +401,25 @@ class PublicDataClient:
         http_status: int,
         provider_result_code: str,
         endpoint: str,
+        *,
+        issued_at: str | None,
+        request_spec: dict[str, Any],
     ) -> dict[str, Any]:
         fetched_at = self.clock().astimezone(UTC).isoformat().replace("+00:00", "Z")
         content = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        fingerprint_input = json.dumps(
+            {"source_id": source_id, **request_spec},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
         return {
             "source_id": source_id,
-            "request_fingerprint": hashlib.sha256(source_id.encode()).hexdigest(),
+            "request_spec": request_spec,
+            "request_fingerprint": hashlib.sha256(fingerprint_input.encode()).hexdigest(),
             "http_status": http_status,
             "provider_result_code": provider_result_code,
-            "issued_at": None,
+            "issued_at": issued_at,
             "fetched_at": fetched_at,
             "content_checksum": hashlib.sha256(content.encode()).hexdigest(),
             "adapter_version": "public-data-v1",
@@ -359,6 +431,29 @@ class PublicDataClient:
             "redacted_endpoint": endpoint,
             "payload": payload,
         }
+
+    @staticmethod
+    def _latest_issued_at(values: list[Any], *, assume_tz) -> str | None:
+        parsed_values: list[datetime] = []
+        for value in values:
+            if value in {None, ""}:
+                continue
+            text = str(value).strip()
+            try:
+                if len(text) == 8 and text.isdigit():
+                    parsed = datetime.strptime(text, "%Y%m%d").replace(tzinfo=assume_tz)
+                elif len(text) == 10 and text[4] == "-" and text[7] == "-":
+                    parsed = datetime.strptime(text, "%Y-%m-%d").replace(tzinfo=assume_tz)
+                else:
+                    parsed = datetime.fromisoformat(text)
+            except ValueError:
+                continue
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=assume_tz)
+            parsed_values.append(parsed.astimezone(UTC))
+        if not parsed_values:
+            return None
+        return max(parsed_values).isoformat().replace("+00:00", "Z")
 
 
 class SourceResolver:
@@ -380,7 +475,12 @@ class SourceResolver:
         supported = set(definition.modes)
         if not (allowed & supported):
             return self._state(definition, SourceState.NOT_REQUESTED)
-        if DataMode.SYNTHETIC in allowed and DataMode.SYNTHETIC in supported:
+        real_mode_requested = bool(allowed & supported & {DataMode.LIVE, DataMode.CACHED})
+        if (
+            DataMode.SYNTHETIC in allowed
+            and DataMode.SYNTHETIC in supported
+            and not real_mode_requested
+        ):
             return SourceResolution(
                 source_id=source_id,
                 source_class=definition.source_class,
@@ -388,6 +488,7 @@ class SourceResolver:
                 state=SourceState.SYNTHETIC_EXPLICIT,
                 data_mode=DataMode.SYNTHETIC.value,
                 freshness="synthetic",
+                provenance_kind="synthetic",
                 payload=self.fixture_payloads.get(source_id),
                 manifest=self.fixture_payloads.get(source_id),
             )
@@ -418,6 +519,10 @@ class SourceResolver:
             return SourceState.LIVE_UNCONFIGURED
         try:
             record = self.client.fetch(definition.source_id)
+        except ProviderNoDataError:
+            return SourceState.LIVE_NO_DATA
+        except LookupError:
+            return SourceState.LIVE_UNSUPPORTED
         except PermissionError:
             return SourceState.LIVE_AUTH_FAILED
         except (httpx.HTTPError, TimeoutError):
@@ -425,20 +530,7 @@ class SourceResolver:
         except (KeyError, TypeError, ValueError, json.JSONDecodeError):
             return SourceState.LIVE_SCHEMA_INVALID
         self.cache.append(record)
-        return SourceResolution(
-            source_id=definition.source_id,
-            source_class=definition.source_class,
-            optional=definition.optional,
-            state=SourceState.LIVE_OK,
-            data_mode=DataMode.LIVE.value,
-            fetched_at=record["fetched_at"],
-            issued_at=record.get("issued_at"),
-            age_seconds=0,
-            freshness="live",
-            license=record.get("license", "public-data"),
-            payload=record["payload"],
-            manifest=record,
-        )
+        return self._live_resolution(definition, record)
 
     def _cached_record(self, source_id: str) -> dict[str, Any] | None:
         if self.settings.source_mode == "cassette":
@@ -454,18 +546,25 @@ class SourceResolver:
         self, definition: SourceDefinition, record: dict[str, Any]
     ) -> SourceResolution:
         timestamp = record.get("issued_at") or record.get("fetched_at")
-        if timestamp is None or definition.source_id == "historical_observation_fixture":
-            age_seconds = 0
+        is_fixture = bool(record.get("fixture_checksum")) or str(
+            record.get("adapter_version", "")
+        ).startswith("fixture-")
+        if is_fixture:
+            age_seconds = None
+            state, freshness = SourceState.CACHED_FIXTURE, "fixture"
+        elif timestamp is None:
+            age_seconds = None
+            state, freshness = SourceState.CACHED_UNKNOWN_AGE, "unknown"
         else:
             parsed = datetime.fromisoformat(timestamp)
             age_seconds = max(0, int((self.clock().astimezone(UTC) - parsed).total_seconds()))
-        fresh_ttl, stale_ttl = TTL_SECONDS.get(definition.source_id, (0, 0))
-        if age_seconds <= fresh_ttl:
-            state, freshness = SourceState.CACHED_FRESH, "fresh"
-        elif age_seconds <= stale_ttl:
-            state, freshness = SourceState.CACHED_STALE, "stale"
-        else:
-            state, freshness = SourceState.CACHED_EXPIRED, "expired"
+            fresh_ttl, stale_ttl = TTL_SECONDS.get(definition.source_id, (0, 0))
+            if age_seconds <= fresh_ttl:
+                state, freshness = SourceState.CACHED_FRESH, "fresh"
+            elif age_seconds <= stale_ttl:
+                state, freshness = SourceState.CACHED_STALE, "stale"
+            else:
+                state, freshness = SourceState.CACHED_EXPIRED, "expired"
         reason = PUBLIC_REASON.get(state)
         return SourceResolution(
             source_id=definition.source_id,
@@ -480,7 +579,44 @@ class SourceResolver:
             age_seconds=age_seconds,
             freshness=freshness,
             license=record.get("license", "public-data"),
+            provenance_kind="fixture" if is_fixture else "cache",
             payload=record.get("payload"),
+            manifest=record,
+        )
+
+    def _live_resolution(
+        self, definition: SourceDefinition, record: dict[str, Any]
+    ) -> SourceResolution:
+        timestamp = record.get("issued_at")
+        if timestamp is None:
+            age_seconds = None
+            state, freshness = SourceState.LIVE_UNKNOWN_AGE, "unknown"
+        else:
+            parsed = datetime.fromisoformat(timestamp)
+            age_seconds = max(0, int((self.clock().astimezone(UTC) - parsed).total_seconds()))
+            fresh_ttl, stale_ttl = TTL_SECONDS.get(definition.source_id, (0, 0))
+            if age_seconds <= fresh_ttl:
+                state, freshness = SourceState.LIVE_OK, "fresh"
+            elif age_seconds <= stale_ttl:
+                state, freshness = SourceState.LIVE_STALE, "stale"
+            else:
+                state, freshness = SourceState.LIVE_EXPIRED, "expired"
+        reason = PUBLIC_REASON.get(state)
+        return SourceResolution(
+            source_id=definition.source_id,
+            source_class=definition.source_class,
+            optional=definition.optional,
+            state=state,
+            public_reason=reason[1] if reason else None,
+            public_reason_code=reason[0].value if reason else None,
+            data_mode=DataMode.LIVE.value,
+            fetched_at=record["fetched_at"],
+            issued_at=timestamp,
+            age_seconds=age_seconds,
+            freshness=freshness,
+            license=record.get("license", "public-data"),
+            provenance_kind="upstream",
+            payload=record["payload"],
             manifest=record,
         )
 
