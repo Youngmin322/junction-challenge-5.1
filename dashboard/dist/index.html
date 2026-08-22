@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>JellyGuard · 한울 해파리 군집 감시</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">GYEONGBUK PUBLIC DATA · JELLYGUARD</p>
+          <h1>한울 주변 대량 해파리 군집 감시</h1>
+          <p class="subtitle">공개 자료와 조건부 수송 시나리오를 한 화면에서 검토합니다.</p>
+        </div>
+        <div class="top-actions">
+          <span id="mode-chip" class="chip chip-synthetic">SYNTHETIC 시나리오</span>
+          <span id="overall-status" class="status-pill" data-state="LOADING">LOADING</span>
+        </div>
+      </header>
+
+      <section class="connection-bar card">
+        <div>
+          <label for="access-key">로컬 연결 키</label>
+          <input id="access-key" type="password" autocomplete="off" placeholder="서버에 설정한 로컬 키" />
+        </div>
+        <button id="connect-button" type="button">자료 불러오기</button>
+        <button id="run-button" class="primary" type="button" disabled>조건부 시나리오 실행</button>
+        <p id="connection-message" role="status">로컬 서비스를 연결해 주세요.</p>
+      </section>
+
+      <section id="state-banner" class="state-banner" data-state="LOADING">
+        <strong id="state-title">연결 대기</strong>
+        <span id="state-detail">자료 상태를 확인하면 감시 화면이 열립니다.</span>
+      </section>
+
+      <section class="workspace">
+        <aside class="sources-panel card">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">A · DATA SOURCES</p>
+              <h2>자료원 상태</h2>
+            </div>
+            <span id="source-count" class="count-badge">0</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>자료원</th><th>상태</th><th>자료시각</th></tr></thead>
+              <tbody id="source-rows">
+                <tr><td colspan="3" class="empty-cell">연결 후 표시됩니다.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="legend compact">
+            <span><i class="dot ready"></i>사용 가능</span>
+            <span><i class="dot stale"></i>저장 자료</span>
+            <span><i class="dot blocked"></i>사용 불가</span>
+          </div>
+        </aside>
+
+        <section class="map-panel card">
+          <div class="section-heading map-heading">
+            <div>
+              <p class="section-kicker">B · WATCH CELLS</p>
+              <h2>감시격자와 이동 범위</h2>
+            </div>
+            <div class="controls-inline">
+              <label>시간창
+                <select id="horizon-select">
+                  <option value="3">3h</option>
+                  <option value="6">6h</option>
+                  <option value="12" selected>12h</option>
+                </select>
+              </label>
+              <label>격자 범위
+                <select id="neighbor-select">
+                  <option value="core">core</option>
+                  <option value="edge4">edge4</option>
+                  <option value="edge8" selected>edge8</option>
+                </select>
+              </label>
+            </div>
+          </div>
+          <div class="plot-wrap">
+            <svg id="watch-plot" viewBox="0 0 840 650" role="img" aria-label="한울 공개 감시격자 조건부 시나리오">
+              <defs>
+                <pattern id="grid-pattern" width="64" height="43" patternUnits="userSpaceOnUse">
+                  <path d="M 64 0 L 0 0 0 43" fill="none" stroke="#17314d" stroke-width="1" />
+                </pattern>
+                <filter id="soft-glow"><feGaussianBlur stdDeviation="5" /></filter>
+              </defs>
+              <rect x="72" y="42" width="720" height="540" rx="16" class="plot-bg" />
+              <rect x="72" y="42" width="720" height="540" rx="16" fill="url(#grid-pattern)" />
+              <g id="plot-labels"></g>
+              <g id="plot-envelope"></g>
+              <g id="plot-zones"></g>
+              <g id="plot-seeds"></g>
+            </svg>
+            <div id="plot-empty" class="plot-empty">
+              <strong>아직 계산된 시나리오가 없습니다.</strong>
+              <span>자료를 불러온 뒤 실행 버튼을 눌러 주세요.</span>
+            </div>
+          </div>
+          <div class="map-legend">
+            <span><i class="swatch seed"></i>해파리 관측 입력</span>
+            <span><i class="swatch envelope"></i>조건부 이동 범위</span>
+            <span><i class="swatch watch"></i>공개 감시격자</span>
+          </div>
+        </section>
+
+        <aside class="evidence-panel card">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">C · EVIDENCE</p>
+              <h2>교차 결과와 근거</h2>
+            </div>
+          </div>
+          <div id="intersection-cards" class="intersection-list">
+            <div class="placeholder-card">시나리오 실행 후 감시격자별 결과가 표시됩니다.</div>
+          </div>
+          <dl class="evidence-list">
+            <div><dt>실행 ID</dt><dd id="run-id">—</dd></div>
+            <div><dt>재현 digest</dt><dd id="run-digest">—</dd></div>
+            <div><dt>계산 엔진</dt><dd id="engine-version">—</dd></div>
+            <div><dt>자료 기준시각</dt><dd id="as-of">—</dd></div>
+          </dl>
+          <details>
+            <summary>근거와 가정 보기</summary>
+            <pre id="explanation">연결 후 표시됩니다.</pre>
+          </details>
+        </aside>
+      </section>
+
+      <footer class="disclaimer-card">
+        <strong>프로토타입 해석 범위</strong>
+        <p>합성 유동장에 의존한 조건부 시나리오이며 실제 예보가 아닙니다.</p>
+        <p>합성 사각 도메인으로 해안선·육지·수심을 반영하지 않습니다.</p>
+        <p>공개 관측점 기반 프로토타입 감시격자이며 실제 취수구·안전계통 경계가 아닙니다.</p>
+      </footer>
+    </main>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

@@ -18,6 +18,7 @@ from jellyguard.contracts.models import ComponentStatus
 
 from .ports import KeyValueStore
 from .provenance import deterministic_digest
+from .source_state import SourceResolver, SourceState
 from .transport import (
     DomainGrid,
     deterministic_run_seed,
@@ -44,6 +45,7 @@ class DomainService:
         provenance_store: KeyValueStore,
         audit_store: KeyValueStore,
         artifact_store: KeyValueStore,
+        source_resolver: SourceResolver,
         clock: Callable[[], datetime],
         new_id: Callable[[str], str],
     ) -> None:
@@ -60,6 +62,7 @@ class DomainService:
         self.provenance_store = provenance_store
         self.audit_store = audit_store
         self.artifact_store = artifact_store
+        self.source_resolver = source_resolver
         self.new_id = new_id
 
     def _result(
@@ -157,6 +160,16 @@ class DomainService:
         return {**self.source_manifests[source_id], "role": role}
 
     @staticmethod
+    def _resolved_source_entry(resolution, role: str) -> dict:
+        manifest = dict(resolution.manifest or {})
+        manifest.pop("payload", None)
+        manifest.setdefault("source_id", resolution.source_id)
+        manifest.setdefault("source_data_mode", resolution.data_mode)
+        manifest.setdefault("license", resolution.license)
+        manifest["role"] = role
+        return manifest
+
+    @staticmethod
     def _scenario_seed_source(seed: dict) -> dict:
         seed_id = seed["seed_id"]
         checksum = deterministic_digest(seed)
@@ -198,6 +211,122 @@ class DomainService:
         self.seed_store.put(seed_id, record)
         return record
 
+    def get_source_status(
+        self,
+        *,
+        site_id: str = "HANUL_PUBLIC_DEMO",
+        allowed_modes: list[str] | None = None,
+        include_internal: bool = False,
+    ) -> DomainResult:
+        modes = self._modes(allowed_modes)
+        resolutions = self.source_resolver.resolve_all(modes)
+        usable = {
+            SourceState.LIVE_OK,
+            SourceState.CACHED_FRESH,
+            SourceState.CACHED_STALE,
+            SourceState.SYNTHETIC_EXPLICIT,
+        }
+        components = [
+            ComponentStatus(
+                source_id=item.source_id,
+                role="optional_context" if item.optional else "candidate",
+                status=CalculationStatus.READY
+                if item.state in usable
+                else CalculationStatus.BLOCKED,
+                selected=item.state in usable,
+                source_data_mode=DataMode(item.data_mode) if item.data_mode else None,
+                reason_codes=[item.public_reason_code] if item.public_reason_code else [],
+                source_state=item.public_reason_code,
+            )
+            for item in resolutions
+        ]
+        selected = [item for item in resolutions if item.state in usable]
+        if any(item.state == SourceState.CACHED_STALE for item in selected):
+            status = CalculationStatus.STALE
+        elif any(item.optional and item.state not in usable for item in resolutions):
+            status = CalculationStatus.DEGRADED
+        else:
+            status = CalculationStatus.READY
+        return self._result(
+            tool_name="get_source_status",
+            status=status,
+            claim_type=ClaimType.DIAGNOSTIC,
+            data={
+                "sources": [
+                    item.public_dict(include_internal=include_internal) for item in resolutions
+                ],
+                "live_enabled": bool(self.settings.enabled_live_sources()),
+                "profile": self.settings.profile,
+                "source_mode": self.settings.source_mode if include_internal else None,
+                "request_echo": {"site_id": site_id, "allowed_modes": [m.value for m in modes]},
+            },
+            component_status=components,
+            modes=list(
+                dict.fromkeys(DataMode(item.data_mode) for item in selected if item.data_mode)
+            ),
+            selected_sources=[
+                self._resolved_source_entry(
+                    item, "optional_context" if item.optional else "candidate"
+                )
+                for item in selected
+            ],
+            excluded_sources=[
+                {
+                    "source_id": item.source_id,
+                    "reason_code": item.public_reason_code or item.state.value,
+                }
+                for item in resolutions
+                if item.state not in usable
+            ],
+            warnings=[item.public_reason for item in resolutions if item.public_reason is not None],
+            query_id=self.new_id("QUERY"),
+        )
+
+    def get_run(self, run_id: str) -> DomainResult:
+        run = self.run_store.get(run_id)
+        if run is not None:
+            return DomainResult(**run)
+        return self._result(
+            tool_name="get_run",
+            status=CalculationStatus.BLOCKED,
+            claim_type=ClaimType.DIAGNOSTIC,
+            data={"run_id": run_id},
+            status_reasons=[ErrorCode.RUN_NOT_FOUND.value],
+            error=ServiceError(code=ErrorCode.RUN_NOT_FOUND, message="run을 찾을 수 없습니다."),
+            run_id=run_id,
+        )
+
+    def dashboard_bootstrap(self, site_id: str = "HANUL_PUBLIC_DEMO") -> DomainResult:
+        source_status = self.get_source_status(
+            site_id=site_id,
+            allowed_modes=["CACHED", "SYNTHETIC"],
+            include_internal=False,
+        )
+        return self._result(
+            tool_name="dashboard_bootstrap",
+            status=CalculationStatus.READY,
+            claim_type=ClaimType.DIAGNOSTIC,
+            data={
+                "site_id": site_id,
+                "domain": self.synthetic_domain,
+                "zones": self.demo_zones,
+                "scenario_seeds": self.seed_store.values(),
+                "sources": source_status.data["sources"],
+                "source_status": source_status.status,
+                "source_warnings": source_status.warnings,
+                "horizons_h": [3, 6, 12],
+                "profiles": ["B0_hold", "B2_current_only", "B3"],
+                "dashboard_contract": "offline_public_watch_cells_v1",
+            },
+            modes=[DataMode.CACHED, DataMode.SYNTHETIC],
+            warnings=[
+                "합성 유동장에 의존한 조건부 시나리오입니다. 실제 예보가 아닙니다.",
+                "합성 사각 도메인입니다. 해안선·육지·수심을 반영하지 않으며 입자가 육상 위를 지날 수 있습니다.",
+                "공개 관측점 기반 프로토타입 감시격자입니다. 실제 취수구·안전계통 경계가 아닙니다.",
+            ],
+            query_id=self.new_id("QUERY"),
+        )
+
     def search_observations(
         self,
         *,
@@ -213,7 +342,20 @@ class DomainService:
         include_scenario_seeds: bool = False,
     ) -> DomainResult:
         modes = self._modes(allowed_modes)
-        candidates = list(self.observation_records) if DataMode.CACHED in modes else []
+        observation_resolution = self.source_resolver.resolve(
+            "historical_observation_fixture", modes
+        )
+        catalog_resolution = self.source_resolver.resolve("nifs_jelly_catalog", modes)
+        available_states = {
+            SourceState.LIVE_OK,
+            SourceState.CACHED_FRESH,
+            SourceState.CACHED_STALE,
+        }
+        candidates = (
+            list(observation_resolution.payload or [])
+            if observation_resolution.state in available_states
+            else []
+        )
         records = list(candidates)
         excluded_counts: dict[str, int] = {}
         request_echo = {
@@ -317,7 +459,11 @@ class DomainService:
         if len(records) > limit:
             excluded_counts["limit"] = len(records) - limit
             records = records[:limit]
-        catalog = self.catalog_records if DataMode.CACHED in modes else []
+        catalog = (
+            list(catalog_resolution.payload or [])
+            if catalog_resolution.state in available_states
+            else []
+        )
         scenario_seeds = (
             self.seed_store.values()
             if include_scenario_seeds and DataMode.SYNTHETIC in modes
@@ -346,12 +492,24 @@ class DomainService:
                 ),
                 query_id=self.new_id("QUERY"),
             )
-        used_modes = [DataMode.CACHED]
+        resolved_available = [
+            item
+            for item in (observation_resolution, catalog_resolution)
+            if item.state in available_states
+        ]
+        used_modes = list(
+            dict.fromkeys(DataMode(item.data_mode) for item in resolved_available if item.data_mode)
+        )
         if scenario_seeds:
-            used_modes.append(DataMode.SYNTHETIC)
+            used_modes = list(dict.fromkeys([*used_modes, DataMode.SYNTHETIC]))
         return self._result(
             tool_name="search_observations",
-            status=CalculationStatus.READY,
+            status=CalculationStatus.STALE
+            if any(
+                item.state == SourceState.CACHED_STALE
+                for item in (observation_resolution, catalog_resolution)
+            )
+            else CalculationStatus.READY,
             claim_type=ClaimType.DIRECT_OBSERVATION,
             data={
                 "records": records,
@@ -365,10 +523,22 @@ class DomainService:
             },
             modes=used_modes,
             selected_sources=[
-                self._source_entry("historical_observation_fixture", "required_input"),
-                self._source_entry("nifs_jelly_catalog", "optional_context"),
+                self._resolved_source_entry(
+                    item,
+                    "required_input"
+                    if item.source_id == "historical_observation_fixture"
+                    else "optional_context",
+                )
+                for item in resolved_available
             ],
-            warnings=["과거 녹화 자료 재생이며 현재 상태가 아닙니다."],
+            warnings=[
+                "과거 녹화 자료 재생이며 현재 상태가 아닙니다.",
+                *(
+                    [catalog_resolution.public_reason]
+                    if catalog_resolution.public_reason is not None
+                    else []
+                ),
+            ],
             query_id=self.new_id("QUERY"),
         )
 
@@ -383,7 +553,12 @@ class DomainService:
     ) -> DomainResult:
         modes = self._modes(allowed_modes)
         synthetic_allowed = DataMode.SYNTHETIC in modes
-        point_context_available = DataMode.CACHED in modes
+        point_resolution = self.source_resolver.resolve("khoa_tw_recent_hanul", modes)
+        point_context_available = point_resolution.state in {
+            SourceState.LIVE_OK,
+            SourceState.CACHED_FRESH,
+            SourceState.CACHED_STALE,
+        }
         components = [
             ComponentStatus(
                 source_id="khoa_roms_live",
@@ -417,8 +592,13 @@ class DomainService:
                 status=CalculationStatus.READY
                 if point_context_available
                 else CalculationStatus.BLOCKED,
-                source_data_mode=DataMode.CACHED if point_context_available else None,
-                reason_codes=[] if point_context_available else ["MODE_NOT_ALLOWED"],
+                source_data_mode=DataMode(point_resolution.data_mode)
+                if point_context_available and point_resolution.data_mode
+                else None,
+                reason_codes=[]
+                if point_context_available
+                else [point_resolution.public_reason_code or "MODE_NOT_ALLOWED"],
+                source_state=point_resolution.public_reason_code,
             ),
         ]
         selected: list[dict] = []
@@ -432,7 +612,7 @@ class DomainService:
             {"source_id": "cached_field", "reason_code": ErrorCode.NO_COVERAGE.value},
         ]
         if point_context_available:
-            selected.append(self._source_entry("khoa_tw_recent_hanul", "optional_context"))
+            selected.append(self._resolved_source_entry(point_resolution, "optional_context"))
         if synthetic_allowed:
             components.append(
                 ComponentStatus(
@@ -461,7 +641,7 @@ class DomainService:
                     ],
                     "selected_field_ref": synthetic_refs["B2_current_only"],
                     "synthetic_field_refs": synthetic_refs,
-                    "point_context": self.point_context if point_context_available else [],
+                    "point_context": point_resolution.payload if point_context_available else [],
                     "context": [] if not include_context else [{"context_ui_enabled": False}],
                     "request_echo": {
                         "site_id": site_id,
@@ -474,7 +654,14 @@ class DomainService:
                 modes=[DataMode.SYNTHETIC],
                 selected_sources=selected,
                 excluded_sources=excluded,
-                warnings=["합성 유동장에 의존한 조건부 시나리오입니다. 실제 예보가 아닙니다."],
+                warnings=[
+                    "합성 유동장에 의존한 조건부 시나리오입니다. 실제 예보가 아닙니다.",
+                    *(
+                        [point_resolution.public_reason]
+                        if point_resolution.public_reason is not None
+                        else []
+                    ),
+                ],
                 query_id=self.new_id("QUERY"),
             )
         components.append(
@@ -492,7 +679,7 @@ class DomainService:
             data={
                 "field_candidates": [component.model_dump(mode="json") for component in components],
                 "selected_field_ref": None,
-                "point_context": self.point_context if point_context_available else [],
+                "point_context": point_resolution.payload if point_context_available else [],
                 "context": [],
                 "request_echo": {
                     "site_id": site_id,

@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import BaseModel, Field
 
@@ -131,7 +132,27 @@ def create_app(settings: Settings | None = None, service: DomainService | None =
 
     @app.get("/health")
     def health() -> dict:
-        return {"status": "ok", "profile": settings.profile}
+        return {
+            "status": "ok",
+            "profile": settings.profile,
+            "source_mode": settings.source_mode,
+            "live_enabled": bool(settings.enabled_live_sources()),
+        }
+
+    @app.get("/v1/sources/status")
+    def get_source_status(
+        site_id: str = "HANUL_PUBLIC_DEMO",
+        allowed_modes: str = "CACHED,SYNTHETIC",
+    ) -> dict:
+        return service.get_source_status(
+            site_id=site_id,
+            allowed_modes=[mode.strip() for mode in allowed_modes.split(",") if mode.strip()],
+            include_internal=True,
+        ).model_dump(mode="json")
+
+    @app.get("/v1/dashboard/bootstrap")
+    def dashboard_bootstrap(site_id: str = "HANUL_PUBLIC_DEMO") -> dict:
+        return service.dashboard_bootstrap(site_id).model_dump(mode="json")
 
     @app.post("/v1/observations/search")
     def search_observations(request: SearchRequest) -> dict:
@@ -206,6 +227,29 @@ def create_app(settings: Settings | None = None, service: DomainService | None =
             run_id=run_id,
             include=[value.strip() for value in include.split(",") if value.strip()],
         ).model_dump(mode="json")
+
+    @app.get("/v1/hanul/runs/{run_id}")
+    def get_run(run_id: str) -> dict:
+        return service.get_run(run_id).model_dump(mode="json")
+
+    @app.get("/v1/hanul/explain")
+    def explain(
+        run_id: str | None = None,
+        query_id: str | None = None,
+        include: str = "",
+    ) -> dict:
+        return service.explain_run(
+            run_id=run_id,
+            query_id=query_id,
+            include=[value.strip() for value in include.split(",") if value.strip()],
+        ).model_dump(mode="json")
+
+    if settings.dashboard_dist.is_dir():
+        app.mount(
+            "/dashboard",
+            StaticFiles(directory=settings.dashboard_dist, html=True),
+            name="dashboard",
+        )
 
     app.mount("/", mcp_app)
     return app

@@ -21,6 +21,7 @@ class ComponentStatus(BaseModel):
     selected: bool = False
     source_data_mode: DataMode | None = None
     reason_codes: list[str] = Field(default_factory=list)
+    source_state: str | None = None
 
 
 class RawPayload(BaseModel):

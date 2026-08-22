@@ -45,7 +45,7 @@ def test_six_tool_offline_golden_digests(tmp_path):
     )
     results["explain_run"] = service.explain_run(run_id=run_id, include=[])
 
-    golden_path = Path(__file__).parent / "golden/p1_digests.json"
+    golden_path = Path(__file__).parent / "golden/p2_digests.json"
     golden = json.loads(golden_path.read_text(encoding="utf-8"))
     actual = {name: result.deterministic_result_digest for name, result in results.items()}
     assert actual == golden

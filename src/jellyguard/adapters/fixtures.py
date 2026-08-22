@@ -111,9 +111,21 @@ def _zone_version(zone_id: str, neighbor_mode: str) -> str:
 
 
 for zone in DEMO_ZONES:
+    col = int((zone["lon"] - SYNTHETIC_DOMAIN["bbox"]["lon_min"]) / 0.01)
+    row = int((zone["lat"] - SYNTHETIC_DOMAIN["bbox"]["lat_min"]) / 0.01)
+    display_name = {
+        "HB_0007": "감시격자 온양 (HB_0007)",
+        "HB_0008": "감시격자 덕천 (HB_0008)",
+        "HB_0009": "감시격자 나곡 (HB_0009)",
+    }[zone["station_code"]]
     zone.update(
         {
             "domain_id": "SYNTH_DOMAIN_HANUL_v1",
+            "cell_id": f"r{row:02d}c{col:02d}",
+            "display_name": display_name,
+            "access_class": "public",
+            "coordinate_source": "public_observation_station",
+            "license": "public-data",
             "facility_geometry": None,
             "zone_version": _zone_version(zone["zone_id"], "core"),
             "zone_version_by_mode": {

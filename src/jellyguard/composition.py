@@ -14,6 +14,7 @@ from jellyguard.adapters.provenance import fixture_manifest
 from jellyguard.adapters.stores import JsonlStore
 from jellyguard.config.settings import Settings
 from jellyguard.domain.services import DomainService
+from jellyguard.domain.source_state import SourceResolver
 
 
 def system_clock() -> datetime:
@@ -76,6 +77,26 @@ def create_service(settings: Settings, clock=system_clock, new_id=random_id) -> 
             provider_result_code="NO_COVERAGE",
         ),
     }
+    fixture_payloads = {
+        "historical_observation_fixture": {
+            **source_manifests["historical_observation_fixture"],
+            "payload": deepcopy(HISTORICAL_OBSERVATIONS),
+        },
+        "nifs_jelly_catalog": {
+            **source_manifests["nifs_jelly_catalog"],
+            "fetched_at": "2026-08-20T00:00:00Z",
+            "payload": deepcopy(JELLY_CATALOG_FIXTURE),
+        },
+        "khoa_tw_recent_hanul": {
+            **source_manifests["khoa_tw_recent_hanul"],
+            "payload": deepcopy(HANUL_POINT_CONTEXT),
+        },
+        "synthetic_field": {
+            **source_manifests["synthetic_field"],
+            "payload": deepcopy(SYNTHETIC_DOMAIN),
+        },
+    }
+    source_resolver = SourceResolver(settings, clock, fixture_payloads)
     return DomainService(
         settings,
         observation_records=deepcopy(HISTORICAL_OBSERVATIONS),
@@ -89,6 +110,7 @@ def create_service(settings: Settings, clock=system_clock, new_id=random_id) -> 
         provenance_store=JsonlStore(root / "provenance.jsonl"),
         audit_store=JsonlStore(root / "audit.jsonl"),
         artifact_store=JsonlStore(root / "artifacts.jsonl"),
+        source_resolver=source_resolver,
         clock=clock,
         new_id=new_id,
     )
