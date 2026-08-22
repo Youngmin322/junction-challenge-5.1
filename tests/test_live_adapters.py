@@ -194,7 +194,7 @@ def test_khoa_live_budget_stops_before_upstream_call(tmp_path):
         current.fetch("khoa_tw_recent_hanul")
 
 
-@pytest.mark.parametrize("source_id", ["unknown", "khoa_roms_live"])
+@pytest.mark.parametrize("source_id", ["unknown", "nifs_jelly_detail2_unverified"])
 def test_unimplemented_live_source_is_not_silently_reinterpreted(tmp_path, source_id):
     with pytest.raises(LookupError):
         client(tmp_path).fetch(source_id)
@@ -230,3 +230,153 @@ def test_optional_nifs_context_is_preserved_as_context(
     assert record["rows_received"] == 1
     assert record["payload"][0]["claim_type"] == "context"
     assert record["payload"][0]["raw"]["value"] == 24
+
+
+def _roms_item(lat, lon, hour):
+    return {
+        "predcDt": f"2026-08-22 {hour:02d}:00:00",
+        "lat": lat,
+        "lot": lon,
+        "crdir": 4.91,
+        "crsp": 0.15,
+        "wtem": 24.99,
+    }
+
+
+def _roms_pages(cells, hours):
+    rows = [_roms_item(lat, lon, hour) for lat, lon in cells for hour in range(hours)]
+    return rows
+
+
+def test_khoa_roms_pages_until_total_count_and_summarizes_grid(tmp_path, monkeypatch):
+    cells = [(36.99046, 129.43565), (36.99046, 129.46762), (37.01840, 129.43565)]
+    rows = _roms_pages(cells, hours=4)
+    page_size = 5
+
+    def handler(request):
+        params = request.url.params
+        assert params["type"] == "json"
+        assert float(params["ymin"]) == 36.99
+        assert float(params["xmax"]) == 129.48
+        page_no = int(params["pageNo"])
+        chunk = rows[(page_no - 1) * page_size : page_no * page_size]
+        return httpx.Response(
+            200,
+            json={
+                "header": {"resultCode": "00"},
+                "body": {"items": {"item": chunk}, "totalCount": len(rows)},
+            },
+        )
+
+    current = client(tmp_path, khoa_key="secret")
+    monkeypatch.setattr(current, "ROMS_PAGE_SIZE", page_size)
+    monkeypatch.setattr(
+        current,
+        "_client",
+        lambda: httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    record = current.fetch("khoa_roms_live")
+
+    assert record["rows_received"] == len(rows)
+    assert record["rows_expected"] == len(rows)
+    assert record["partial"] is False
+    assert record["pages_received"] == 3
+    assert "secret" not in record["redacted_endpoint"]
+    assert "serviceKey" not in record["request_spec"]
+
+    summary = record["grid_summary"]
+    assert summary["is_area_field"] is True
+    assert summary["cell_count"] == 3
+    assert summary["timestep_count"] == 4
+    assert summary["depth_class"] == "surface_only"
+    assert summary["crdir_convention"] == "UNVERIFIED"
+    assert record["payload"][0]["crdir_convention"] == "UNVERIFIED"
+    # The provider never publishes a model run time, so the age must stay unknown
+    # rather than being inferred from the first forecast hour.
+    assert record["issued_at"] is None
+    assert summary["issue_time_published"] is False
+    assert summary["valid_from_local"] == "2026-08-22 00:00:00"
+
+
+def test_khoa_roms_single_cell_is_not_reported_as_area_field(tmp_path, monkeypatch):
+    rows = _roms_pages([(36.99046, 129.43565)], hours=2)
+
+    def handler(_request):
+        return httpx.Response(
+            200,
+            json={
+                "header": {"resultCode": "00"},
+                "body": {"items": {"item": rows}, "totalCount": len(rows)},
+            },
+        )
+
+    current = client(tmp_path, khoa_key="secret")
+    monkeypatch.setattr(
+        current,
+        "_client",
+        lambda: httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    summary = current.fetch("khoa_roms_live")["grid_summary"]
+    assert summary["is_area_field"] is False
+    assert summary["cell_count"] == 1
+    assert summary["lat_spacing_deg"] is None
+
+
+def test_khoa_roms_truncated_read_is_marked_partial(tmp_path, monkeypatch):
+    rows = _roms_pages([(36.99046, 129.43565), (37.01840, 129.43565)], hours=3)
+
+    def handler(request):
+        page_no = int(request.url.params["pageNo"])
+        chunk = rows[(page_no - 1) * 2 : page_no * 2] if page_no <= 2 else []
+        return httpx.Response(
+            200,
+            json={
+                "header": {"resultCode": "00"},
+                "body": {"items": {"item": chunk}, "totalCount": len(rows)},
+            },
+        )
+
+    current = client(tmp_path, khoa_key="secret")
+    monkeypatch.setattr(current, "ROMS_PAGE_SIZE", 2)
+    monkeypatch.setattr(
+        current,
+        "_client",
+        lambda: httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    record = current.fetch("khoa_roms_live")
+    assert record["partial"] is True
+    assert record["rows_received"] < record["rows_expected"]
+
+
+@pytest.mark.parametrize("result_code", ["20", "30"])
+def test_khoa_roms_provider_auth_codes_are_permission_errors(tmp_path, monkeypatch, result_code):
+    current = client(tmp_path, khoa_key="secret")
+    monkeypatch.setattr(
+        current,
+        "_client",
+        lambda: httpx.Client(
+            transport=httpx.MockTransport(
+                lambda _request: httpx.Response(200, json={"header": {"resultCode": result_code}})
+            )
+        ),
+    )
+    with pytest.raises(PermissionError):
+        current.fetch("khoa_roms_live")
+
+
+def test_khoa_roms_no_data_code_raises_provider_no_data(tmp_path, monkeypatch):
+    current = client(tmp_path, khoa_key="secret")
+    monkeypatch.setattr(
+        current,
+        "_client",
+        lambda: httpx.Client(
+            transport=httpx.MockTransport(
+                lambda _request: httpx.Response(200, json={"header": {"resultCode": "03"}})
+            )
+        ),
+    )
+    with pytest.raises(ProviderNoDataError):
+        current.fetch("khoa_roms_live")

@@ -190,12 +190,41 @@ def test_enabled_but_unimplemented_live_source_is_reported_without_throwing(tmp_
     current = resolver(
         tmp_path,
         source_mode="live",
+        live_enabled_sources="nifs_jelly_detail2_unverified",
+        nifs_jelly_key="configured",
+    )
+    result = current.resolve("nifs_jelly_detail2_unverified", [DataMode.LIVE])
+    assert result.state == SourceState.LIVE_UNSUPPORTED
+    assert result.public_reason_code == "LIVE_NOT_ENABLED"
+
+
+def test_roms_live_resolves_when_enabled_and_stays_disabled_otherwise(tmp_path, monkeypatch):
+    record = {
+        "source_id": "khoa_roms_live",
+        "issued_at": "2026-08-23T01:00:00Z",
+        "fetched_at": "2026-08-23T02:00:00Z",
+        "content_checksum": "sha",
+        "request_fingerprint": "fp",
+        "redacted_endpoint": "https://apis.data.go.kr/1192136/roms/GetRomsApiService",
+        "adapter_version": "public-data-v1",
+        "license": "public-data",
+        "payload": [{"lat": 37.0, "lon": 129.4, "crdir_convention": "UNVERIFIED"}],
+        "rows_received": 1,
+        "pages_received": 1,
+        "partial": False,
+        "failed_pages": [],
+    }
+    enabled = resolver(
+        tmp_path,
+        source_mode="live",
         live_enabled_sources="khoa_roms_live",
         khoa_key="configured",
     )
-    result = current.resolve("khoa_roms_live", [DataMode.LIVE])
-    assert result.state == SourceState.LIVE_UNSUPPORTED
-    assert result.public_reason_code == "LIVE_NOT_ENABLED"
+    monkeypatch.setattr(enabled.client, "fetch", lambda _source_id: record)
+    assert enabled.resolve("khoa_roms_live", [DataMode.LIVE]).state == SourceState.LIVE_OK
+
+    default = resolver(tmp_path, khoa_key="configured")
+    assert default.resolve("khoa_roms_live", [DataMode.LIVE]).state == SourceState.LIVE_DISABLED
 
 
 def test_synthetic_is_only_selected_explicitly(tmp_path):
