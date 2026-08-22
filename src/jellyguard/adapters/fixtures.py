@@ -27,22 +27,40 @@ JELLY_CATALOG_FIXTURE = [
     }
 ]
 
+DEFAULT_SCENARIO_SEEDS = [
+    {
+        "seed_id": "SEED-HANUL-DEMO-001",
+        "geometry": {"type": "Point", "coordinates": [129.46, 37.1]},
+        "reference_time": "2026-08-23T00:00:00Z",
+        "seed_mode": "synthetic",
+        "author_note": "한울 공개 감시격자 P1 실행 확인용 합성 seed",
+        "basis": "synthetic_demo_only",
+        "created_by": "fixture",
+    }
+]
+
 HANUL_POINT_CONTEXT = [
     {
         "station_code": "HB_0007",
         "station_name": "온양",
+        "lat": 37.01944,
+        "lon": 129.425,
         "capabilities": ["current_direction", "current_speed", "water_temperature"],
         "crdir_convention": "UNVERIFIED",
     },
     {
         "station_code": "HB_0008",
         "station_name": "덕천",
+        "lat": 37.1,
+        "lon": 129.40416,
         "capabilities": ["current_direction", "current_speed", "water_temperature", "wind"],
         "crdir_convention": "UNVERIFIED",
     },
     {
         "station_code": "HB_0009",
         "station_name": "나곡",
+        "lat": 37.11916,
+        "lon": 129.39583,
         "capabilities": ["current_direction", "current_speed", "water_temperature"],
         "crdir_convention": "UNVERIFIED",
     },
@@ -58,28 +76,49 @@ SYNTHETIC_DOMAIN = {
 }
 
 DEMO_ZONES = [
-    {"zone_id": "DEMO_GATE_ONYANG_v1", "station_code": "HB_0007"},
-    {"zone_id": "DEMO_GATE_DEOKCHEON_v1", "station_code": "HB_0008"},
-    {"zone_id": "DEMO_GATE_NAGOK_v1", "station_code": "HB_0009"},
+    {
+        "zone_id": "DEMO_GATE_ONYANG_v1",
+        "station_code": "HB_0007",
+        "lat": 37.01944,
+        "lon": 129.425,
+    },
+    {
+        "zone_id": "DEMO_GATE_DEOKCHEON_v1",
+        "station_code": "HB_0008",
+        "lat": 37.1,
+        "lon": 129.40416,
+    },
+    {
+        "zone_id": "DEMO_GATE_NAGOK_v1",
+        "station_code": "HB_0009",
+        "lat": 37.11916,
+        "lon": 129.39583,
+    },
 ]
 
-_zone_version_input = "|".join(
-    [
-        "SYNTH_DOMAIN_HANUL_v1",
-        "public_observation_station_prototype",
-        ",".join(sorted(zone["station_code"] for zone in DEMO_ZONES)),
-        "neighbor_mode=none",
-        "zone_policy_version=v1",
-    ]
-)
-_zone_version = hashlib.blake2b(_zone_version_input.encode(), digest_size=8).hexdigest()
+
+def _zone_version(zone_id: str, neighbor_mode: str) -> str:
+    version_input = "|".join(
+        [
+            "SYNTH_DOMAIN_HANUL_v1",
+            f"public_observation_station_prototype:{zone_id}",
+            ",".join(sorted(zone["station_code"] for zone in DEMO_ZONES)),
+            f"neighbor_mode={neighbor_mode}",
+            "zone_policy_version=v1",
+        ]
+    )
+    return hashlib.blake2b(version_input.encode(), digest_size=8).hexdigest()
+
 
 for zone in DEMO_ZONES:
     zone.update(
         {
             "domain_id": "SYNTH_DOMAIN_HANUL_v1",
             "facility_geometry": None,
-            "zone_version": _zone_version,
+            "zone_version": _zone_version(zone["zone_id"], "core"),
+            "zone_version_by_mode": {
+                mode: _zone_version(zone["zone_id"], mode) for mode in ("core", "edge4", "edge8")
+            },
             "disclaimer_code": "NOT_INTAKE_STRUCTURE",
             "display_disclaimer": "공개 관측점 기반 프로토타입 감시격자입니다. 실제 취수구·안전계통 경계가 아닙니다.",
         }

@@ -22,9 +22,15 @@ class Settings(BaseSettings):
     source_mode: str = "fixture"
     blob_root: Path = Path("./runs")
     enable_local_docs: bool = False
+    local_dashboard_origins: str = "http://127.0.0.1:5173,http://localhost:5173"
 
     def allowed_mcp_hosts(self) -> list[str]:
         return [host.strip() for host in self.mcp_allowed_hosts.split(",") if host.strip()]
+
+    def dashboard_origins(self) -> list[str]:
+        return [
+            origin.strip() for origin in self.local_dashboard_origins.split(",") if origin.strip()
+        ]
 
 
 def load_settings() -> Settings:

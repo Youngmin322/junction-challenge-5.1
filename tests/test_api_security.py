@@ -106,3 +106,27 @@ def test_provider_keys_never_enter_response(tmp_path):
         )
         assert response.status_code == 200
         assert secret not in response.text
+
+
+def test_local_dashboard_origin_gets_cors_but_unknown_origin_does_not(tmp_path):
+    app = create_app(Settings(_env_file=None, local_rest_key="local-secret", blob_root=tmp_path))
+    with TestClient(app, base_url="http://localhost") as client:
+        allowed = client.options(
+            "/v1/hanul/zones",
+            headers={
+                "origin": "http://localhost:5173",
+                "access-control-request-method": "GET",
+                "access-control-request-headers": "x-jellyguard-local-key",
+            },
+        )
+        assert allowed.status_code == 200
+        assert allowed.headers["access-control-allow-origin"] == "http://localhost:5173"
+
+        denied = client.options(
+            "/v1/hanul/zones",
+            headers={
+                "origin": "https://untrusted.example",
+                "access-control-request-method": "GET",
+            },
+        )
+        assert "access-control-allow-origin" not in denied.headers

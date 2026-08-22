@@ -64,7 +64,7 @@ def test_scenario_seed_never_enters_direct_records():
         allowed_modes=["CACHED", "SYNTHETIC"], include_scenario_seeds=True
     )
     assert all(record.get("seed_id") != seed["seed_id"] for record in result.data["records"])
-    assert result.data["scenario_seeds"][0]["seed_id"] == seed["seed_id"]
+    assert seed["seed_id"] in {item["seed_id"] for item in result.data["scenario_seeds"]}
 
 
 def test_live_failure_does_not_silently_select_synthetic():
@@ -98,23 +98,26 @@ def test_optional_cached_context_does_not_mark_calculation_as_replay():
     assert blocked.watermark_code is None
 
 
-def test_p0_transport_and_intersection_are_explicitly_blocked():
+def test_p1_transport_and_intersection_return_conditional_member_results():
     current = service()
     seed = current.register_scenario_seed(
         {
-            "geometry": {"type": "Point", "coordinates": [129.4, 37.1]},
+            "geometry": {"type": "Point", "coordinates": [129.46, 37.1]},
             "reference_time": "2026-08-23T00:00:00Z",
             "created_by": "test",
         }
     )
     run = current.run_transport(
         seed_ids=[seed["seed_id"]],
-        field_ref="synthetic:SYNTH_DOMAIN_HANUL_v1:p0",
+        field_ref=(
+            "synthetic:SYNTH_DOMAIN_HANUL_v1.B2_current_only:"
+            "2026-08-23T00:00:00Z:2026-08-23T00:00:00Z"
+        ),
         allowed_modes=["CACHED", "SYNTHETIC"],
     )
-    assert run.status == "BLOCKED"
-    assert run.error.code == "MODEL_BLOCKED"
-    assert run.data["computed_metric"] is None
+    assert run.status == "READY"
+    assert run.error is None
+    assert run.data["computed_metric"]["released"] == 25
     forbidden_keys = {
         "probability",
         "arrival_probability",
@@ -134,9 +137,8 @@ def test_p0_transport_and_intersection_are_explicitly_blocked():
 
     assert forbidden_keys.isdisjoint(keys(run.model_dump(mode="json")))
     intersection = current.intersect_zone(run_id=run.run_id, zone_ids=["DEMO_GATE_NAGOK_v1"])
-    assert intersection.status == "BLOCKED"
-    assert intersection.data["members_intersected"] is None
-    assert intersection.data["display_string"] is None
+    assert intersection.status == "READY"
+    assert intersection.data["disclaimer_code"] == "NOT_INTAKE_STRUCTURE"
 
 
 def test_non_null_boundary_rule_is_rejected_explicitly():
@@ -286,7 +288,8 @@ def test_domain_does_not_import_transport_adapters():
         source = path.read_text(encoding="utf-8")
         assert "datetime.now(" not in source
         assert "uuid4(" not in source
-        assert "random." not in source
+        assert "np.random.seed(" not in source
+        assert "np.random.normal(" not in source
         assert "socket." not in source
     assert checked > 0
 

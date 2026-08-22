@@ -1,7 +1,9 @@
+from copy import deepcopy
 from datetime import UTC, datetime
 from uuid import uuid4
 
 from jellyguard.adapters.fixtures import (
+    DEFAULT_SCENARIO_SEEDS,
     DEMO_ZONES,
     HANUL_POINT_CONTEXT,
     HISTORICAL_OBSERVATIONS,
@@ -24,6 +26,10 @@ def random_id(prefix: str) -> str:
 
 def create_service(settings: Settings, clock=system_clock, new_id=random_id) -> DomainService:
     root = settings.blob_root
+    seed_store = JsonlStore(root / "scenario-seeds.jsonl")
+    for seed in DEFAULT_SCENARIO_SEEDS:
+        if seed_store.get(seed["seed_id"]) is None:
+            seed_store.put(seed["seed_id"], deepcopy(seed))
     source_manifests = {
         "historical_observation_fixture": fixture_manifest(
             source_id="historical_observation_fixture",
@@ -72,16 +78,17 @@ def create_service(settings: Settings, clock=system_clock, new_id=random_id) -> 
     }
     return DomainService(
         settings,
-        observation_records=HISTORICAL_OBSERVATIONS,
-        catalog_records=JELLY_CATALOG_FIXTURE,
-        point_context=HANUL_POINT_CONTEXT,
-        synthetic_domain=SYNTHETIC_DOMAIN,
-        demo_zones=DEMO_ZONES,
+        observation_records=deepcopy(HISTORICAL_OBSERVATIONS),
+        catalog_records=deepcopy(JELLY_CATALOG_FIXTURE),
+        point_context=deepcopy(HANUL_POINT_CONTEXT),
+        synthetic_domain=deepcopy(SYNTHETIC_DOMAIN),
+        demo_zones=deepcopy(DEMO_ZONES),
         source_manifests=source_manifests,
-        seed_store=JsonlStore(root / "scenario-seeds.jsonl"),
+        seed_store=seed_store,
         run_store=JsonlStore(root / "runs.jsonl"),
         provenance_store=JsonlStore(root / "provenance.jsonl"),
         audit_store=JsonlStore(root / "audit.jsonl"),
+        artifact_store=JsonlStore(root / "artifacts.jsonl"),
         clock=clock,
         new_id=new_id,
     )

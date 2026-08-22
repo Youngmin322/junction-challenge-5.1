@@ -22,5 +22,17 @@ uv run jellyguard
 없어도 CACHED/SYNTHETIC 계약 테스트와 서버 실행은 가능하며, LIVE 후보는
 자동 대체하지 않고 차단 사유를 반환합니다.
 
-P0에서는 데이터가 충분하지 않은 수송·감시격자 교차 계산을 의도적으로
-`BLOCKED`로 반환합니다. 합성·캐시 자료로 자동 대체하지 않습니다.
+## 현재 실행 범위
+
+- `B0_hold`, `B2_current_only`, `B3` 합성 field의 결정론적 member 수송
+- 3·6·12시간 이동 envelope와 member 보존 진단
+- 온양·덕천·나곡 공개 관측점 기반 `DEMO_GATE`의 core/edge4/edge8 교차
+- `M of N`과 요청 horizon 기반 최초 교차 시간창
+- REST와 MCP에서 동일한 결과 digest
+
+기본 합성 seed는 `SEED-HANUL-DEMO-001`입니다. 먼저
+`get_field_status(allowed_modes=["SYNTHETIC"])`가 반환한 `field_ref`를 사용해
+`run_transport`를 호출하고, 반환된 `run_id`로 `intersect_zone`을 호출합니다.
+
+실제 ROMS 면 유동장, 해안선·수심, 실제 취수구 기하가 필요한 요청은 계속
+`BLOCKED`로 남습니다. 캐시나 합성 자료를 LIVE 자료로 자동 대체하지 않습니다.

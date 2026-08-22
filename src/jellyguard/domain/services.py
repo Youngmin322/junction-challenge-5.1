@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
+from copy import deepcopy
 from datetime import datetime
 
 from jellyguard.config.settings import Settings
@@ -16,6 +18,12 @@ from jellyguard.contracts.models import ComponentStatus
 
 from .ports import KeyValueStore
 from .provenance import deterministic_digest
+from .transport import (
+    DomainGrid,
+    deterministic_run_seed,
+    parse_synthetic_field_ref,
+    run_synthetic_transport,
+)
 
 
 class DomainService:
@@ -35,6 +43,7 @@ class DomainService:
         run_store: KeyValueStore,
         provenance_store: KeyValueStore,
         audit_store: KeyValueStore,
+        artifact_store: KeyValueStore,
         clock: Callable[[], datetime],
         new_id: Callable[[str], str],
     ) -> None:
@@ -50,6 +59,7 @@ class DomainService:
         self.run_store = run_store
         self.provenance_store = provenance_store
         self.audit_store = audit_store
+        self.artifact_store = artifact_store
         self.new_id = new_id
 
     def _result(
@@ -145,6 +155,34 @@ class DomainService:
 
     def _source_entry(self, source_id: str, role: str) -> dict:
         return {**self.source_manifests[source_id], "role": role}
+
+    @staticmethod
+    def _scenario_seed_source(seed: dict) -> dict:
+        seed_id = seed["seed_id"]
+        checksum = deterministic_digest(seed)
+        return {
+            "source_id": "scenario_seed_synthetic",
+            "role": "required_input",
+            "request_spec": {"seed_id": seed_id},
+            "redacted_endpoint": "local://scenario-seeds",
+            "http_status": None,
+            "provider_result_code": "LOCAL_APPEND_ONLY",
+            "fetched_at": None,
+            "issued_at": None,
+            "valid_at": seed.get("reference_time"),
+            "content_checksum": checksum,
+            "request_fingerprint": deterministic_digest({"seed_id": seed_id}),
+            "fixture_checksum": checksum if seed.get("created_by") == "fixture" else None,
+            "source_data_mode": "SYNTHETIC",
+            "adapter_version": "scenario-seed-v1",
+            "license": "user-or-demo-input",
+            "rows_received": 1,
+            "rows_expected": 1,
+            "pages_received": 1,
+            "pages_expected": 1,
+            "partial": False,
+            "failed_pages": [],
+        }
 
     def register_scenario_seed(self, payload: dict) -> dict:
         seed_id = self.new_id("SEED")
@@ -406,6 +444,13 @@ class DomainService:
                 )
             )
             selected.append(self._source_entry("synthetic_field", "required_input"))
+            synthetic_refs = {
+                profile: (
+                    f"synthetic:SYNTH_DOMAIN_HANUL_v1.{profile}:"
+                    "2026-08-23T00:00:00Z:2026-08-23T00:00:00Z"
+                )
+                for profile in ("B0_hold", "B2_current_only", "B3")
+            }
             return self._result(
                 tool_name="get_field_status",
                 status=CalculationStatus.READY,
@@ -414,7 +459,8 @@ class DomainService:
                     "field_candidates": [
                         component.model_dump(mode="json") for component in components
                     ],
-                    "selected_field_ref": "synthetic:SYNTH_DOMAIN_HANUL_v1:p0",
+                    "selected_field_ref": synthetic_refs["B2_current_only"],
+                    "synthetic_field_refs": synthetic_refs,
                     "point_context": self.point_context if point_context_available else [],
                     "context": [] if not include_context else [{"context_ui_enabled": False}],
                     "request_echo": {
@@ -509,18 +555,21 @@ class DomainService:
         seed_ids: list[str],
         field_ref: str | None,
         horizons_h: list[int] | None = None,
-        scenario_id: str = "P0_BLOCKED",
+        scenario_id: str = "B2_current_only",
         gate_mapping: str = "DEMO_GATE",
         boundary_rule: str | None = None,
         allowed_modes: list[str] | None = None,
     ) -> DomainResult:
         modes = self._modes(allowed_modes)
         run_id = self.new_id("RUN")
-        missing = [seed_id for seed_id in seed_ids if self.seed_store.get(seed_id) is None]
+        requested_horizons = [3, 6, 12] if horizons_h is None else horizons_h
+        seeds = [self.seed_store.get(seed_id) for seed_id in seed_ids]
+        missing = [seed_id for seed_id, seed in zip(seed_ids, seeds, strict=True) if seed is None]
+        error: ServiceError | None = None
         if boundary_rule is not None:
             error = ServiceError(
                 code=ErrorCode.SCHEMA_INVALID,
-                message="P0 합성 도메인은 boundary_rule을 허용하지 않습니다.",
+                message="합성 도메인은 boundary_rule을 허용하지 않습니다.",
                 unavailable_reason="unsupported_boundary_rule",
                 required=["boundary_rule=null"],
             )
@@ -531,30 +580,173 @@ class DomainService:
                 unavailable_reason="no_seed",
                 required=["등록된 scenario seed"],
             )
-        else:
+        elif len(set(seed_ids)) != len(seed_ids):
+            error = ServiceError(
+                code=ErrorCode.SCHEMA_INVALID,
+                message="seed_ids에는 중복 ID를 넣을 수 없습니다.",
+            )
+        elif (
+            not requested_horizons
+            or len(requested_horizons) > 8
+            or any(
+                not isinstance(hour, int) or hour < 1 or hour > 24 for hour in requested_horizons
+            )
+        ):
+            error = ServiceError(
+                code=ErrorCode.SCHEMA_INVALID,
+                message="horizons_h는 1~24 정수이며 최대 8개여야 합니다.",
+            )
+        elif gate_mapping != "DEMO_GATE":
+            error = ServiceError(
+                code=ErrorCode.GATE_MAPPING_BLOCKED,
+                message="승인된 DEMO_GATE mapping만 사용할 수 있습니다.",
+            )
+        elif DataMode.SYNTHETIC not in modes:
             error = ServiceError(
                 code=ErrorCode.MODEL_BLOCKED,
-                message="P0에서는 수송 계산을 수행하지 않습니다.",
-                unavailable_reason="domain_insufficient",
-                required=["P1 결정론적 수송 엔진 승인"],
+                message="합성 field 사용이 명시적으로 허용되지 않았습니다.",
+                unavailable_reason="no_field",
+                required=["allowed_modes에 SYNTHETIC 명시"],
             )
-        result = self._result(
-            tool_name="run_transport",
-            status=CalculationStatus.BLOCKED,
-            claim_type=ClaimType.CONDITIONAL_SCENARIO,
-            data={
-                "seed_ids": seed_ids,
+        elif field_ref is None:
+            error = ServiceError(
+                code=ErrorCode.MODEL_BLOCKED,
+                message="선택된 field가 없습니다.",
+                unavailable_reason="no_field",
+                required=["get_field_status가 반환한 synthetic field_ref"],
+            )
+        grid = DomainGrid.from_fixture(self.synthetic_domain)
+        valid_seeds = [seed for seed in seeds if seed is not None]
+        if error is None:
+            for seed in valid_seeds:
+                geometry = seed.get("geometry", {})
+                coordinates = geometry.get("coordinates")
+                if (
+                    geometry.get("type") != "Point"
+                    or not isinstance(coordinates, list)
+                    or len(coordinates) != 2
+                    or any(
+                        not isinstance(value, (int, float)) or not math.isfinite(value)
+                        for value in coordinates
+                    )
+                ):
+                    error = ServiceError(
+                        code=ErrorCode.SCHEMA_INVALID,
+                        message="P1 seed geometry는 유한한 WGS84 GeoJSON Point만 허용합니다.",
+                    )
+                    break
+                if not grid.contains(coordinates[0], coordinates[1]):
+                    error = ServiceError(
+                        code=ErrorCode.MODEL_BLOCKED,
+                        message="seed가 합성 도메인 범위 밖에 있습니다.",
+                        unavailable_reason="outside_coverage",
+                    )
+                    break
+
+        profile_id: str | None = None
+        if error is None and field_ref is not None:
+            if not field_ref.startswith("synthetic:"):
+                if "khoa_tw_recent_hanul" in field_ref:
+                    error = ServiceError(
+                        code=ErrorCode.DIRECTION_UNVERIFIED,
+                        message="점관측 유향 convention이 검증되지 않아 수송장으로 사용할 수 없습니다.",
+                        unavailable_reason="direction_unverified",
+                    )
+                else:
+                    error = ServiceError(
+                        code=ErrorCode.NO_COMPATIBLE_SOURCE,
+                        message="승인된 합성 grid와 호환되지 않는 field_ref입니다.",
+                    )
+            else:
+                try:
+                    profile_id = parse_synthetic_field_ref(field_ref, grid.domain_id)
+                except LookupError as exc:
+                    error = ServiceError(code=ErrorCode.NO_COMPATIBLE_SOURCE, message=str(exc))
+                except ValueError as exc:
+                    error = ServiceError(code=ErrorCode.SCHEMA_INVALID, message=str(exc))
+
+        normalized_horizons = (
+            sorted(set(requested_horizons))
+            if all(isinstance(hour, int) for hour in requested_horizons)
+            else list(requested_horizons)
+        )
+        request_echo = {
+            "seed_ids": sorted(seed_ids),
+            "field_ref": field_ref,
+            "horizons_h": normalized_horizons,
+            "scenario_id": scenario_id,
+            "gate_mapping": gate_mapping,
+            "boundary_rule": boundary_rule,
+            "zone_versions": sorted(
+                {
+                    version
+                    for zone in self.demo_zones
+                    for version in zone["zone_version_by_mode"].values()
+                }
+            ),
+        }
+        if error is not None:
+            result = self._result(
+                tool_name="run_transport",
+                status=CalculationStatus.BLOCKED,
+                claim_type=ClaimType.CONDITIONAL_SCENARIO,
+                data={**request_echo, "computed_metric": None},
+                status_reasons=[error.code.value],
+                modes=[],
+                error=error,
+                run_id=run_id,
+            )
+            self.run_store.put(run_id, result.model_dump(mode="json"))
+            return result
+
+        run_seed = deterministic_run_seed(
+            {
+                "seed_ids": tuple(sorted(seed_ids)),
                 "field_ref": field_ref,
-                "horizons_h": horizons_h or [3, 6, 12],
+                "horizons_h": tuple(normalized_horizons),
                 "scenario_id": scenario_id,
                 "gate_mapping": gate_mapping,
-                "boundary_rule": boundary_rule,
-                "zone_versions": sorted({zone["zone_version"] for zone in self.demo_zones}),
-                "computed_metric": None,
+                "engine_version": "synthetic-rk4-v1",
+                "selection_policy_version": "selection-v1",
+                "gate_policy_version": "gate-v1",
+            }
+        )
+        computed, artifact = run_synthetic_transport(
+            seeds=valid_seeds,
+            grid=grid,
+            profile_id=profile_id,
+            horizons_h=normalized_horizons,
+            run_seed=run_seed,
+        )
+        artifact["zones"] = deepcopy(self.demo_zones)
+        artifact_id = f"ART-{run_seed:016x}"
+        if self.artifact_store.get(artifact_id) is None:
+            self.artifact_store.put(artifact_id, artifact)
+        result = self._result(
+            tool_name="run_transport",
+            status=CalculationStatus.READY,
+            claim_type=ClaimType.CONDITIONAL_SCENARIO,
+            data={
+                **request_echo,
+                "computed_metric": computed,
+                "artifact_refs": [f"jsonl://artifacts/{artifact_id}"],
+                "engine_version": "synthetic-rk4-v1",
+                "reproducibility": computed["reproducibility"],
+                "disclaimer_code": "NOT_INTAKE_STRUCTURE",
             },
-            status_reasons=[error.code.value],
-            modes=[mode for mode in modes if mode in (DataMode.CACHED, DataMode.SYNTHETIC)],
-            error=error,
+            modes=[DataMode.SYNTHETIC],
+            selected_sources=[
+                *(
+                    self._scenario_seed_source(seed)
+                    for seed in sorted(valid_seeds, key=lambda item: item["seed_id"])
+                ),
+                self._source_entry("synthetic_field", "required_input"),
+            ],
+            warnings=[
+                "합성 유동장에 의존한 조건부 시나리오입니다. 실제 예보가 아닙니다.",
+                "합성 사각 도메인입니다. 해안선·육지·수심을 반영하지 않으며 입자가 육상 위를 지날 수 있습니다.",
+                "공개 관측점 기반 프로토타입 감시격자입니다. 실제 취수구·안전계통 경계가 아닙니다.",
+            ],
             run_id=run_id,
         )
         self.run_store.put(run_id, result.model_dump(mode="json"))
@@ -570,7 +762,20 @@ class DomainService:
         run = self.run_store.get(run_id)
         known_zone_ids = {zone["zone_id"] for zone in self.demo_zones}
         missing_zones = [zone_id for zone_id in zone_ids if zone_id not in known_zone_ids]
-        if missing_zones:
+        raw_horizons = [3, 6, 12] if horizons_h is None else horizons_h
+        requested_horizons = sorted(set(raw_horizons))
+        if (
+            not requested_horizons
+            or len(raw_horizons) > 8
+            or any(
+                not isinstance(hour, int) or hour < 1 or hour > 24 for hour in requested_horizons
+            )
+        ):
+            error = ServiceError(
+                code=ErrorCode.SCHEMA_INVALID,
+                message="horizons_h는 1~24 정수이며 최대 8개여야 합니다.",
+            )
+        elif missing_zones:
             error = ServiceError(
                 code=ErrorCode.ZONE_NOT_FOUND,
                 message="감시격자를 찾을 수 없습니다.",
@@ -578,28 +783,148 @@ class DomainService:
             )
         elif run is None:
             error = ServiceError(code=ErrorCode.RUN_NOT_FOUND, message="run을 찾을 수 없습니다.")
-        else:
+        elif run["status"] != CalculationStatus.READY.value:
             error = ServiceError(
                 code=ErrorCode.MODEL_BLOCKED,
-                message="P0에서는 감시격자 교차를 계산하지 않습니다.",
-                unavailable_reason="domain_insufficient",
-                required=["P1 교차 엔진 승인"],
+                message="BLOCKED run에는 감시격자 교차를 계산하지 않습니다.",
+                unavailable_reason=run.get("error", {}).get(
+                    "unavailable_reason", "domain_insufficient"
+                ),
+            )
+        else:
+            error = None
+        if error is not None:
+            return self._result(
+                tool_name="intersect_zone",
+                status=CalculationStatus.BLOCKED,
+                claim_type=ClaimType.CONDITIONAL_SCENARIO,
+                data={
+                    "run_id": run_id,
+                    "zone_ids": zone_ids,
+                    "horizons_h": requested_horizons,
+                    "members_intersected": None,
+                    "members_total": None,
+                    "display_string": None,
+                    "first_intersection_window": None,
+                },
+                status_reasons=[error.code.value],
+                error=error,
+                run_id=run_id,
+            )
+
+        artifact_ref = run["data"]["artifact_refs"][0]
+        artifact_id = artifact_ref.rsplit("/", 1)[-1]
+        artifact = self.artifact_store.get(artifact_id)
+        available_horizons = set(artifact["horizons_h"]) if artifact else set()
+        if artifact is None or not set(requested_horizons) <= available_horizons:
+            error = ServiceError(
+                code=ErrorCode.SCHEMA_INVALID,
+                message="요청 horizon이 run artifact에 존재하지 않습니다.",
+            )
+            return self._result(
+                tool_name="intersect_zone",
+                status=CalculationStatus.BLOCKED,
+                claim_type=ClaimType.CONDITIONAL_SCENARIO,
+                data={
+                    "run_id": run_id,
+                    "zone_ids": zone_ids,
+                    "horizons_h": requested_horizons,
+                    "computed_metric": None,
+                },
+                status_reasons=[error.code.value],
+                error=error,
+                run_id=run_id,
+            )
+
+        grid = DomainGrid.from_fixture(self.synthetic_domain)
+        zones_by_id = {zone["zone_id"]: zone for zone in artifact["zones"]}
+        zone_results = []
+        for zone_id in zone_ids:
+            zone = zones_by_id[zone_id]
+            center_cell = grid.cell_id(zone["lon"], zone["lat"])
+            sensitivity = {}
+            for mode in ("core", "edge4", "edge8"):
+                gate_cells = grid.neighbor_cells(center_cell, mode)
+                by_horizon = []
+                first_window = None
+                previous_horizon = 0
+                for hour in requested_horizons:
+                    active_member_ids = {
+                        item["member_index"] for item in artifact["snapshots"][str(hour)]
+                    }
+                    intersected = 0
+                    for member in artifact["members"]:
+                        if member["member_index"] not in active_member_ids:
+                            continue
+                        if any(
+                            cell_id in gate_cells and first_minutes <= hour * 60
+                            for cell_id, first_minutes in member["visited_cells"].items()
+                        ):
+                            intersected += 1
+                    if intersected and first_window is None:
+                        first_window = {
+                            "from_h": previous_horizon,
+                            "to_h": hour,
+                            "basis": "requested_horizon_bracket",
+                        }
+                    by_horizon.append(
+                        {
+                            "horizon_h": hour,
+                            "members_intersected": intersected,
+                            "members_total": len(active_member_ids),
+                            "display_string": f"{intersected} of {len(active_member_ids)}",
+                            "terminated_by": run["data"]["computed_metric"]["horizon_summary"][
+                                str(hour)
+                            ]["terminated_by"],
+                        }
+                    )
+                    previous_horizon = hour
+                sensitivity[mode] = {
+                    "by_horizon": by_horizon,
+                    "first_intersection_window": first_window,
+                    "unavailable_reason": None
+                    if first_window is not None
+                    else "no_intersection_within_horizons",
+                }
+            zone_results.append(
+                {
+                    "zone_id": zone_id,
+                    "zone_version_by_mode": zone["zone_version_by_mode"],
+                    "sensitivity": sensitivity,
+                }
+            )
+
+        current_versions = {
+            version for zone in self.demo_zones for version in zone["zone_version_by_mode"].values()
+        }
+        recorded_versions = set(run["data"]["zone_versions"])
+        warnings = [
+            "합성 유동장에 의존한 조건부 시나리오입니다. 실제 예보가 아닙니다.",
+            "합성 사각 도메인입니다. 해안선·육지·수심을 반영하지 않으며 입자가 육상 위를 지날 수 있습니다.",
+            "공개 관측점 기반 프로토타입 감시격자입니다. 실제 취수구·안전계통 경계가 아닙니다.",
+        ]
+        if recorded_versions != current_versions:
+            warnings.append(
+                f"{ErrorCode.ZONE_VERSION_MISMATCH.value}: "
+                f"recorded={sorted(recorded_versions)}, current={sorted(current_versions)}"
             )
         return self._result(
             tool_name="intersect_zone",
-            status=CalculationStatus.BLOCKED,
+            status=CalculationStatus.READY,
             claim_type=ClaimType.CONDITIONAL_SCENARIO,
             data={
                 "run_id": run_id,
                 "zone_ids": zone_ids,
-                "horizons_h": horizons_h or [3, 6, 12],
-                "members_intersected": None,
-                "members_total": None,
-                "display_string": None,
-                "first_intersection_window": None,
+                "horizons_h": requested_horizons,
+                "zones": zone_results,
+                "recorded_zone_versions": sorted(recorded_versions),
+                "current_zone_versions": sorted(current_versions),
+                "disclaimer_code": "NOT_INTAKE_STRUCTURE",
+                "orchestrator": "mock",
             },
-            status_reasons=[error.code.value],
-            error=error,
+            modes=[DataMode.SYNTHETIC],
+            selected_sources=[self._source_entry("synthetic_field", "required_input")],
+            warnings=warnings,
             run_id=run_id,
         )
 
@@ -670,7 +995,10 @@ class DomainService:
             "inputs": run["data"],
             "status": run["status"],
             "status_reasons": run["status_reasons"],
-            "assumptions": ["P0에서는 수송·교차 계산을 수행하지 않음"],
+            "assumptions": [
+                "합성 사각 도메인과 선언된 속도 상수만 사용",
+                "실제 해안선·수심·취수구 기하를 사용하지 않음",
+            ],
             "digest": run["deterministic_result_digest"],
         }
         return self._result(

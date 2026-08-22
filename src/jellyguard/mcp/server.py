@@ -63,12 +63,12 @@ def create_mcp_server(service: DomainService) -> MCPServer:
         seed_ids: list[str],
         field_ref: str | None = None,
         horizons_h: list[int] | None = None,
-        scenario_id: str = "P0_BLOCKED",
+        scenario_id: str = "B2_current_only",
         gate_mapping: str = "DEMO_GATE",
         boundary_rule: str | None = None,
         allowed_modes: list[str] | None = None,
     ) -> DomainResult:
-        """등록 seed의 조건부 수송을 요청합니다. P0에서는 BLOCKED를 반환합니다."""
+        """등록 seed와 명시적 합성 field로 조건부 member 수송을 실행합니다."""
 
         return service.run_transport(
             seed_ids=seed_ids,
@@ -96,7 +96,7 @@ def create_mcp_server(service: DomainService) -> MCPServer:
         zone_ids: list[str],
         horizons_h: list[int] | None = None,
     ) -> DomainResult:
-        """run과 감시격자 교차를 요청합니다. P0에서는 BLOCKED를 반환합니다."""
+        """READY run과 공개 관측점 기반 감시격자의 member 교차를 계산합니다."""
 
         return service.intersect_zone(
             run_id=run_id,

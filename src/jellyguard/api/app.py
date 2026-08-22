@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import BaseModel, Field
@@ -40,7 +41,7 @@ class RunRequest(BaseModel):
     seed_ids: list[str]
     field_ref: str | None = None
     horizons_h: list[int] = Field(default_factory=lambda: [3, 6, 12])
-    scenario_id: str = "P0_BLOCKED"
+    scenario_id: str = "B2_current_only"
     gate_mapping: str = "DEMO_GATE"
     boundary_rule: str | None = None
     allowed_modes: list[str] = Field(default_factory=lambda: ["CACHED"])
@@ -95,9 +96,17 @@ def create_app(settings: Settings | None = None, service: DomainService | None =
     app.state.settings = settings
     app.state.service = service
     app.state.mcp_server = mcp_server
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.dashboard_origins(),
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["content-type", "x-jellyguard-local-key"],
+    )
 
     @app.middleware("http")
     async def protect_external_surface(request: Request, call_next):
+        if request.method == "OPTIONS" and request.headers.get("access-control-request-method"):
+            return await call_next(request)
         path = request.url.path.rstrip("/") or "/"
         host = request.headers.get("host", "")
         if _is_external_tunnel_host(host) and path != "/mcp":
