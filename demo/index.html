@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>원전 취수구 조건부 연결영역 시나리오</title>
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">FICTIONAL DEMO</p>
+          <h1>원전 취수구 조건부 연결영역</h1>
+        </div>
+        <p class="notice">가상 시나리오 결과이며 실제 위험 확률이 아닙니다.</p>
+      </header>
+
+      <section class="controls" aria-label="시나리오 제어">
+        <label>
+          <span>시나리오</span>
+          <select id="scenario-select"></select>
+        </label>
+        <label class="timeline-control">
+          <span>도달 시간 <strong id="timeline-value">48시간 이내</strong></span>
+          <input id="timeline" type="range" min="0" max="48" value="48" step="1" />
+        </label>
+        <p id="scenario-description" class="scenario-description"></p>
+      </section>
+
+      <section class="map-panel" aria-label="시간대별 조건부 연결영역 지도">
+        <div id="map"></div>
+        <aside class="legend" aria-label="최초 도달 시간 범례">
+          <h2>최초 도달 시간</h2>
+          <ul>
+            <li><span class="swatch swatch-2"></span>2시간 이내</li>
+            <li><span class="swatch swatch-4"></span>2–4시간</li>
+            <li><span class="swatch swatch-24"></span>4–24시간</li>
+            <li><span class="swatch swatch-48"></span>24–48시간</li>
+          </ul>
+          <p>색이 진할수록 더 이른 시점에 도달한 가상 격자입니다.</p>
+        </aside>
+      </section>
+
+      <footer id="disclaimer" class="disclaimer"></footer>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

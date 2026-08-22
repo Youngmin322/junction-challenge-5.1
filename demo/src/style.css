@@ -1,0 +1,94 @@
+:root {
+  color: #172033;
+  background: #edf3f7;
+  font-family: Inter, Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body { margin: 0; }
+
+.app-shell {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.topbar,
+.controls {
+  display: flex;
+  gap: 24px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.topbar { margin-bottom: 18px; }
+
+.eyebrow {
+  margin: 0 0 4px;
+  color: #b91c1c;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+}
+
+h1, h2, p { margin-top: 0; }
+h1 { margin-bottom: 0; font-size: clamp(24px, 4vw, 36px); }
+
+.notice {
+  max-width: 320px;
+  margin-bottom: 0;
+  color: #7f1d1d;
+  font-size: 14px;
+  font-weight: 700;
+  text-align: right;
+}
+
+.controls {
+  margin-bottom: 16px;
+  padding: 16px;
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 8px 24px rgb(15 23 42 / 8%);
+}
+
+label { display: grid; gap: 7px; min-width: 200px; font-size: 14px; font-weight: 700; }
+select, input { width: 100%; }
+select { padding: 9px 10px; border: 1px solid #cbd5e1; border-radius: 8px; background: #fff; }
+.timeline-control { flex: 1; }
+.timeline-control span { display: flex; justify-content: space-between; }
+.scenario-description { flex: 1; margin: 22px 0 0; color: #475569; font-size: 14px; line-height: 1.5; }
+
+.map-panel { position: relative; overflow: hidden; min-height: 620px; border-radius: 16px; box-shadow: 0 16px 36px rgb(15 23 42 / 16%); }
+#map { position: absolute; inset: 0; }
+
+.legend {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  max-width: 220px;
+  padding: 14px;
+  border-radius: 12px;
+  background: rgb(255 255 255 / 94%);
+  box-shadow: 0 8px 20px rgb(15 23 42 / 15%);
+  font-size: 13px;
+}
+
+.legend h2 { margin-bottom: 10px; font-size: 15px; }
+.legend ul { display: grid; gap: 7px; margin: 0 0 10px; padding: 0; list-style: none; }
+.legend li { display: flex; gap: 8px; align-items: center; }
+.legend p { margin-bottom: 0; color: #475569; line-height: 1.4; }
+.swatch { width: 14px; height: 14px; border-radius: 3px; }
+.swatch-2 { background: #991b1b; }
+.swatch-4 { background: #dc2626; }
+.swatch-24 { background: #f97316; }
+.swatch-48 { background: #fecaca; }
+.disclaimer { margin: 16px 0 0; color: #475569; font-size: 12px; line-height: 1.5; }
+
+@media (max-width: 760px) {
+  .app-shell { padding: 14px; }
+  .topbar, .controls { align-items: stretch; flex-direction: column; gap: 12px; }
+  .notice { max-width: none; text-align: left; }
+  .scenario-description { margin-top: 0; }
+  .map-panel { min-height: 520px; }
+}
