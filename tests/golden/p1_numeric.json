@@ -1,0 +1,12 @@
+{
+  "horizons": {
+    "3": {"released": 25, "valid": 25, "terminated": 0, "cells": 9, "bbox": [129.43, 37.09, 129.46, 37.12]},
+    "6": {"released": 25, "valid": 25, "terminated": 0, "cells": 9, "bbox": [129.42, 37.09, 129.45, 37.12]},
+    "12": {"released": 25, "valid": 25, "terminated": 0, "cells": 9, "bbox": [129.39, 37.1, 129.42, 37.13]}
+  },
+  "zones": {
+    "DEMO_GATE_ONYANG_v1": {"core": [0, 0, 0], "edge4": [0, 0, 0], "edge8": [0, 0, 0], "first": null},
+    "DEMO_GATE_DEOKCHEON_v1": {"core": [0, 0, 0], "edge4": [0, 0, 8], "edge8": [0, 0, 12], "first": [6, 12]},
+    "DEMO_GATE_NAGOK_v1": {"core": [0, 0, 6], "edge4": [0, 0, 16], "edge8": [0, 0, 20], "first": [6, 12]}
+  }
+}
