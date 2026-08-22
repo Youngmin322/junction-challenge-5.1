@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from 'react';
 
 type Language = 'ko' | 'en';
 type Message = { role: 'assistant' | 'user'; content: string };
@@ -147,6 +147,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [copilotState, setCopilotState] = useState<CopilotState>('checking');
   const [backendState, setBackendState] = useState<BackendState>('checking');
+  const chatScrollRef = useRef<HTMLDivElement>(null);
   const t = copy[language];
 
   useEffect(() => {
@@ -170,6 +171,17 @@ export default function Home() {
         setBackendState('offline');
       });
   }, []);
+
+  useEffect(() => {
+    const chatScroll = chatScrollRef.current;
+    if (!chatScroll) return;
+
+    const frame = window.requestAnimationFrame(() => {
+      chatScroll.scrollTo({ top: chatScroll.scrollHeight, behavior: 'smooth' });
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [messages, loading]);
 
   function toggleLanguage() {
     const nextLanguage: Language = language === 'ko' ? 'en' : 'ko';
@@ -223,6 +235,12 @@ export default function Home() {
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void sendMessage(input);
+  }
+
+  function handleInputKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key !== 'Enter' || event.nativeEvent.isComposing) return;
     event.preventDefault();
     void sendMessage(input);
   }
@@ -308,7 +326,11 @@ export default function Home() {
                 <span className={`connection-light ${copilotState}`} aria-label={`Copilot ${t.status[copilotState]}`} />
               </div>
 
-              <div className="chat-scroll mt-7 space-y-3 overflow-y-auto pr-1" aria-live="polite">
+              <div
+                ref={chatScrollRef}
+                className="chat-scroll mt-7 space-y-3 overflow-y-auto pr-1"
+                aria-live="polite"
+              >
                 {messages.map((message, index) => (
                   <div key={`${message.role}-${index}`} className={`message ${message.role}`}>
                     {message.content}
@@ -330,6 +352,7 @@ export default function Home() {
                   aria-label={t.inputLabel}
                   className="min-w-0 flex-1 bg-transparent px-3 text-sm outline-none"
                   onChange={(event) => setInput(event.target.value)}
+                  onKeyDown={handleInputKeyDown}
                   placeholder={t.inputPlaceholder}
                   value={input}
                 />
