@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     http_read_timeout_s: float = 8.0
     live_budget_s: float = 12.0
     dashboard_dist: Path = Path("./dashboard/dist")
+    risk_zone_engine_enabled: bool = True
+    risk_zone_node_bin: str = "node"
+    risk_zone_bridge: Path = Path("./engines/risk-zone/dist/risk-zone-bridge.mjs")
+    risk_zone_timeout_s: float = 30.0
     enable_local_docs: bool = False
     local_dashboard_origins: str = "http://127.0.0.1:5173,http://localhost:5173"
 

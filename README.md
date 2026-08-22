@@ -61,6 +61,44 @@ uv run pytest -q
 `JELLYGUARD_SOURCE_MODE=live` 및 `JELLYGUARD_LIVE_ENABLED_SOURCES`를 명시해야 합니다.
 LIVE 실패 시 fixture나 synthetic으로 조용히 전환되지 않습니다.
 
+## 수송 엔진 두 가지
+
+`run_transport`의 `engine` 인자로 계산기를 고릅니다. 어느 쪽을 썼는지는 응답의
+`data.engine_version`과 `computed_metric.engine`에 남고, 결과 digest도 서로 다릅니다.
+
+| engine | 계산 | 추가 출력 | 필요 런타임 |
+| --- | --- | --- | --- |
+| `synthetic-rk4-v1` (기본) | 합성 상수장 RK4 수송 | 없음 | Python만 |
+| `risk-zone-connectivity-v1` | 조건부 연결영역 엔진(중점법 + 통과판정 + 게이트 선분교차) | `gate_connectivity`, `gate_geometry` | Node 22 이상 |
+
+```bash
+uv run python scripts/demo_check.py --client-key mcp-demo-key   --engine risk-zone-connectivity-v1
+```
+
+연결영역 엔진은 `engines/risk-zone`의 TypeScript 구현을 그대로 호출합니다. 저장소에는
+의존성 없는 ESM 번들 `engines/risk-zone/dist/risk-zone-bridge.mjs`가 함께 들어 있어
+Python 쪽에서 `npm install` 없이 `node`만 있으면 동작합니다. 엔진 소스를 고친 뒤에는
+번들을 다시 만듭니다.
+
+```bash
+cd engines/risk-zone && npm install && npm run build:bridge && npm test
+```
+
+이 엔진은 두 가지를 나란히 보여주기 위해 붙였습니다. `intersect_zone`의 `M of N`은
+**감시격자 셀을 지나간 member 수**이고, `gate_connectivity`의 `M of N`은
+**감시 게이트 선분을 통과한 member 수**입니다. 같은 run에서 두 값이 다를 수 있으며,
+서로 다른 질문에 답하므로 화면과 발표에서 구분해야 합니다.
+
+엔진의 경계도 응답에 그대로 남습니다.
+
+- 게이트는 합성 유향에 **수직으로 자동 배치한 폭 4 km 선분**이며 실제 취수구 개구부가 아닙니다.
+- 수심은 **평탄 합성값**이라 통과판정이 사실상 도메인 커버리지 검사로만 작동합니다.
+  `coastline_basis: synthetic_flat_bathymetry`가 이를 명시합니다.
+- 도달시각 분위수는 **반환하지 않습니다.** 합성 상수장에서 ETA처럼 읽히기 때문에,
+  `intersect_zone`과 같은 `requested_horizon_bracket` 시간창만 제공합니다.
+- Node가 없거나 번들이 없으면 다른 엔진으로 조용히 대체하지 않고
+  `ENGINE_UNAVAILABLE`로 차단하고 복구 방법을 `required`에 담습니다.
+
 ## 자료 모드와 데모 검증
 
 - `fixture`: 저장소에 포함된 고정 자료와 합성 시나리오로 재현 가능한 데모를 실행합니다.
@@ -85,6 +123,7 @@ uv run python scripts/demo_check.py --client-key mcp-demo-key
 ## 현재 실행 범위
 
 - `B0_hold`, `B2_current_only`, `B3` 합성 field의 결정론적 member 수송
+- 같은 입력을 두 엔진으로 실행하고 결과를 분리해 비교
 - 3·6·12시간 이동 envelope와 member 보존 진단
 - 온양·덕천·나곡 공개 관측점 기반 `DEMO_GATE`의 core/edge4/edge8 교차
 - `M of N`과 요청 horizon 기반 최초 교차 시간창
@@ -94,8 +133,9 @@ uv run python scripts/demo_check.py --client-key mcp-demo-key
 `get_field_status(allowed_modes=["SYNTHETIC"])`가 반환한 `field_ref`를 사용해
 `run_transport`를 호출하고, 반환된 `run_id`로 `intersect_zone`을 호출합니다.
 
-실제 ROMS 면 유동장, 해안선·수심, 실제 취수구 기하가 필요한 요청은 계속
-`BLOCKED`로 남습니다. 캐시나 합성 자료를 LIVE 자료로 자동 대체하지 않습니다.
+실제 ROMS 면 유동장, 실제 해안선·수심, 실제 취수구 기하가 필요한 요청은 계속
+`BLOCKED`로 남습니다. 연결영역 엔진은 실제 수심·해안선을 받을 수 있는 입력 구조를
+갖고 있지만, 현재 주입하는 값은 평탄 합성 수심입니다. 캐시나 합성 자료를 LIVE 자료로 자동 대체하지 않습니다.
 
 대시보드는 외부 지도·CDN에 의존하지 않는 임시 구현입니다. 공개 관측점 기반 감시격자,
 조건부 이동 envelope, 3·6·12시간별 `M of N` 교차, 실행 ID·digest·근거를 보여줍니다.

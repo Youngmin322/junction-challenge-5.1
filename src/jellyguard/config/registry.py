@@ -41,6 +41,7 @@ SOURCE_REGISTRY = {
         ),
         SourceDefinition("cached_field", "field", (DataMode.CACHED,), None),
         SourceDefinition("synthetic_field", "field", (DataMode.SYNTHETIC,), None),
+        SourceDefinition("synthetic_bathymetry_flat", "navigability", (DataMode.SYNTHETIC,), None),
         SourceDefinition("khoa_roms_blocked_fixture", "field", (DataMode.CACHED,), None),
         SourceDefinition(
             "nifs_redtide_list",

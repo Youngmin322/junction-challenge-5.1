@@ -16,15 +16,27 @@ from jellyguard.contracts import (
 )
 from jellyguard.contracts.models import ComponentStatus
 
+from .connectivity import (
+    ENGINE_ID as RISK_ZONE_ENGINE_ID,
+)
+from .connectivity import (
+    RiskZoneEngineError,
+    ensure_available,
+    run_risk_zone_transport,
+)
 from .ports import KeyValueStore
 from .provenance import deterministic_digest
 from .source_state import SourceResolver, SourceState
 from .transport import (
+    SYNTHETIC_PROFILES,
     DomainGrid,
     deterministic_run_seed,
     parse_synthetic_field_ref,
     run_synthetic_transport,
 )
+
+SYNTHETIC_ENGINE_ID = "synthetic-rk4-v1"
+TRANSPORT_ENGINES = (SYNTHETIC_ENGINE_ID, RISK_ZONE_ENGINE_ID)
 
 
 class DomainService:
@@ -798,6 +810,7 @@ class DomainService:
         gate_mapping: str = "DEMO_GATE",
         boundary_rule: str | None = None,
         allowed_modes: list[str] | None = None,
+        engine: str = SYNTHETIC_ENGINE_ID,
     ) -> DomainResult:
         modes = self._modes(allowed_modes)
         run_id = self.new_id("RUN")
@@ -805,7 +818,13 @@ class DomainService:
         seeds = [self.seed_store.get(seed_id) for seed_id in seed_ids]
         missing = [seed_id for seed_id, seed in zip(seed_ids, seeds, strict=True) if seed is None]
         error: ServiceError | None = None
-        if boundary_rule is not None:
+        if engine not in TRANSPORT_ENGINES:
+            error = ServiceError(
+                code=ErrorCode.SCHEMA_INVALID,
+                message="지원하지 않는 transport engine입니다.",
+                required=[f"engine: {', '.join(TRANSPORT_ENGINES)}"],
+            )
+        elif boundary_rule is not None:
             error = ServiceError(
                 code=ErrorCode.SCHEMA_INVALID,
                 message="합성 도메인은 boundary_rule을 허용하지 않습니다.",
@@ -904,6 +923,17 @@ class DomainService:
                 except ValueError as exc:
                     error = ServiceError(code=ErrorCode.SCHEMA_INVALID, message=str(exc))
 
+        if error is None and engine == RISK_ZONE_ENGINE_ID:
+            try:
+                ensure_available(self.settings)
+            except RiskZoneEngineError as exc:
+                error = ServiceError(
+                    code=ErrorCode(exc.code),
+                    message=exc.message,
+                    unavailable_reason="engine_unavailable",
+                    required=exc.required,
+                )
+
         normalized_horizons = (
             sorted(set(requested_horizons))
             if all(isinstance(hour, int) for hour in requested_horizons)
@@ -916,6 +946,7 @@ class DomainService:
             "scenario_id": scenario_id,
             "gate_mapping": gate_mapping,
             "boundary_rule": boundary_rule,
+            "engine": engine,
             "zone_versions": sorted(
                 {
                     version
@@ -945,18 +976,51 @@ class DomainService:
                 "horizons_h": tuple(normalized_horizons),
                 "scenario_id": scenario_id,
                 "gate_mapping": gate_mapping,
-                "engine_version": "synthetic-rk4-v1",
+                "engine_version": engine,
                 "selection_policy_version": "selection-v1",
                 "gate_policy_version": "gate-v1",
             }
         )
-        computed, artifact = run_synthetic_transport(
-            seeds=valid_seeds,
-            grid=grid,
-            profile_id=profile_id,
-            horizons_h=normalized_horizons,
-            run_seed=run_seed,
-        )
+        if engine == RISK_ZONE_ENGINE_ID:
+            try:
+                computed, artifact = run_risk_zone_transport(
+                    settings=self.settings,
+                    seeds=valid_seeds,
+                    grid=grid,
+                    profile_id=profile_id,
+                    field_constants=SYNTHETIC_PROFILES[profile_id],
+                    horizons_h=normalized_horizons,
+                    zones=self.demo_zones,
+                    run_seed=run_seed,
+                    field_ref=field_ref,
+                )
+            except RiskZoneEngineError as exc:
+                engine_error = ServiceError(
+                    code=ErrorCode(exc.code),
+                    message=exc.message,
+                    unavailable_reason="engine_failed",
+                    required=exc.required,
+                )
+                result = self._result(
+                    tool_name="run_transport",
+                    status=CalculationStatus.BLOCKED,
+                    claim_type=ClaimType.CONDITIONAL_SCENARIO,
+                    data={**request_echo, "computed_metric": None},
+                    status_reasons=[engine_error.code.value],
+                    modes=[],
+                    error=engine_error,
+                    run_id=run_id,
+                )
+                self.run_store.put(run_id, result.model_dump(mode="json"))
+                return result
+        else:
+            computed, artifact = run_synthetic_transport(
+                seeds=valid_seeds,
+                grid=grid,
+                profile_id=profile_id,
+                horizons_h=normalized_horizons,
+                run_seed=run_seed,
+            )
         artifact["zones"] = deepcopy(self.demo_zones)
         artifact_id = f"ART-{run_seed:016x}"
         if self.artifact_store.get(artifact_id) is None:
@@ -969,7 +1033,7 @@ class DomainService:
                 **request_echo,
                 "computed_metric": computed,
                 "artifact_refs": [f"jsonl://artifacts/{artifact_id}"],
-                "engine_version": "synthetic-rk4-v1",
+                "engine_version": engine,
                 "reproducibility": computed["reproducibility"],
                 "disclaimer_code": "NOT_INTAKE_STRUCTURE",
             },
@@ -980,10 +1044,25 @@ class DomainService:
                     for seed in sorted(valid_seeds, key=lambda item: item["seed_id"])
                 ),
                 self._source_entry("synthetic_field", "required_input"),
+                *(
+                    [self._source_entry("synthetic_bathymetry_flat", "required_input")]
+                    if engine == RISK_ZONE_ENGINE_ID
+                    else []
+                ),
             ],
             warnings=[
                 "합성 유동장에 의존한 조건부 시나리오입니다. 실제 예보가 아닙니다.",
-                "합성 사각 도메인입니다. 해안선·육지·수심을 반영하지 않으며 입자가 육상 위를 지날 수 있습니다.",
+                *(
+                    [
+                        "평탄 합성 수심을 사용합니다. 실제 해안선·수심이 아니므로 통과판정은 도메인 커버리지 검사로만 작동합니다.",
+                        "감시 게이트는 합성 유향에 수직으로 자동 배치한 폭 4 km 선분이며 실제 취수구 개구부가 아닙니다.",
+                        "조건부 연결 비율이며 막힘 확률이 아닙니다.",
+                    ]
+                    if engine == RISK_ZONE_ENGINE_ID
+                    else [
+                        "합성 사각 도메인입니다. 해안선·육지·수심을 반영하지 않으며 입자가 육상 위를 지날 수 있습니다."
+                    ]
+                ),
                 "공개 관측점 기반 프로토타입 감시격자입니다. 실제 취수구·안전계통 경계가 아닙니다.",
             ],
             run_id=run_id,
@@ -1158,6 +1237,12 @@ class DomainService:
                 "zones": zone_results,
                 "recorded_zone_versions": sorted(recorded_versions),
                 "current_zone_versions": sorted(current_versions),
+                "engine": run["data"].get("engine_version", SYNTHETIC_ENGINE_ID),
+                # The connectivity engine also decides arrival by gate-line
+                # crossing. That number answers a different question than the
+                # cell intersection above, so both are returned side by side.
+                "gate_connectivity": artifact.get("gate_connectivity"),
+                "gate_geometry": run["data"]["computed_metric"].get("gate_geometry"),
                 "disclaimer_code": "NOT_INTAKE_STRUCTURE",
                 "orchestrator": "mock",
             },

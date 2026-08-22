@@ -10,3 +10,6 @@ runs/*
 # Offline contract fixtures and golden files are intentionally tracked.
 !tests/fixtures/**
 !tests/golden/**
+
+# Engine bundle is tracked; its build inputs are not.
+node_modules/

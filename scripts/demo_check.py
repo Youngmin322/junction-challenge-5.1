@@ -22,7 +22,7 @@ def require(result, *, status: str, watermark: str | None = None) -> dict:
     return payload
 
 
-async def run_demo(url: str, client_key: str) -> None:
+async def run_demo(url: str, client_key: str, engine: str) -> None:
     async with (
         httpx.AsyncClient(headers={"x-mcp-client-key": client_key}) as client,
         streamable_http_client(url, http_client=client) as (read_stream, write_stream),
@@ -74,13 +74,26 @@ async def run_demo(url: str, client_key: str) -> None:
                     "horizons_h": [3, 6, 12],
                     "scenario_id": "B2_current_only",
                     "allowed_modes": ["SYNTHETIC"],
+                    "engine": engine,
                 },
             ),
             status="READY",
             watermark="SYNTHETIC_SCENARIO",
         )
         run_id = run["run_id"]
-        print("4/6 run_transport", run["status"], run_id)
+        metric = run["data"]["computed_metric"]
+        print("4/6 run_transport", run["status"], run_id, run["data"]["engine_version"])
+        if engine == "risk-zone-connectivity-v1":
+            # The connectivity engine adds gate-line crossings on top of the
+            # cell intersection reported in step 5.
+            for zone_id, gate in metric["gate_connectivity"].items():
+                window = gate["first_crossing_window"] or gate["unavailable_reason"]
+                print(
+                    "    gate",
+                    zone_id,
+                    [item["display_string"] for item in gate["by_horizon"]],
+                    window,
+                )
 
         zones = require(await session.call_tool("list_zones", {}), status="READY")
         zone_ids = [zone["zone_id"] for zone in zones["data"]["zones"]]
@@ -114,11 +127,17 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="JellyGuard MCP six-tool demo check")
     parser.add_argument("--url", default="http://127.0.0.1:8000/mcp")
     parser.add_argument("--client-key", default=os.getenv("JELLYGUARD_MCP_CLIENT_KEY"))
+    parser.add_argument(
+        "--engine",
+        default="synthetic-rk4-v1",
+        choices=["synthetic-rk4-v1", "risk-zone-connectivity-v1"],
+        help="transport engine used by run_transport",
+    )
     args = parser.parse_args()
     if not args.client_key:
         print("MCP client key is required", file=sys.stderr)
         return 2
-    asyncio.run(run_demo(args.url, args.client_key))
+    asyncio.run(run_demo(args.url, args.client_key, args.engine))
     print("DEMO CHECK PASS")
     return 0
 

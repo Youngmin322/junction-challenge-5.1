@@ -3,7 +3,7 @@ from __future__ import annotations
 from mcp.server import MCPServer
 
 from jellyguard.contracts import DomainResult
-from jellyguard.domain.services import DomainService
+from jellyguard.domain.services import SYNTHETIC_ENGINE_ID, DomainService
 
 
 def create_mcp_server(service: DomainService) -> MCPServer:
@@ -67,8 +67,17 @@ def create_mcp_server(service: DomainService) -> MCPServer:
         gate_mapping: str = "DEMO_GATE",
         boundary_rule: str | None = None,
         allowed_modes: list[str] | None = None,
+        engine: str = SYNTHETIC_ENGINE_ID,
     ) -> DomainResult:
-        """등록 seed와 명시적 합성 field로 조건부 member 수송을 실행합니다."""
+        """등록 seed와 명시적 합성 field로 조건부 member 수송을 실행합니다.
+
+        engine은 두 계산기 중 하나를 고릅니다.
+        - `synthetic-rk4-v1`: 내장 RK4 수송. 해안선·수심을 보지 않습니다.
+        - `risk-zone-connectivity-v1`: 조건부 연결영역 엔진. 중점법 수송에
+          통과판정과 감시 게이트 선분교차를 더해 게이트 도달 member와 ETA
+          분위수를 함께 반환합니다. Node 런타임이 필요하며, 사용할 수 없으면
+          다른 엔진으로 대체하지 않고 ENGINE_UNAVAILABLE로 차단합니다.
+        """
 
         return service.run_transport(
             seed_ids=seed_ids,
@@ -78,6 +87,7 @@ def create_mcp_server(service: DomainService) -> MCPServer:
             gate_mapping=gate_mapping,
             boundary_rule=boundary_rule,
             allowed_modes=allowed_modes,
+            engine=engine,
         )
 
     @server.tool()

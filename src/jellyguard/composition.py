@@ -13,6 +13,7 @@ from jellyguard.adapters.fixtures import (
 from jellyguard.adapters.provenance import fixture_manifest
 from jellyguard.adapters.stores import JsonlStore
 from jellyguard.config.settings import Settings
+from jellyguard.domain.connectivity import FLAT_DEPTH_M, MINIMUM_WATER_DEPTH_M
 from jellyguard.domain.services import DomainService
 from jellyguard.domain.source_state import SourceResolver
 
@@ -58,6 +59,17 @@ def create_service(settings: Settings, clock=system_clock, new_id=random_id) -> 
             payload=SYNTHETIC_DOMAIN,
             source_data_mode="SYNTHETIC",
             redacted_endpoint="synthetic://SYNTH_DOMAIN_HANUL_v1",
+            rows_received=1,
+        ),
+        "synthetic_bathymetry_flat": fixture_manifest(
+            source_id="synthetic_bathymetry_flat",
+            payload={
+                "flat_depth_m": FLAT_DEPTH_M,
+                "minimum_water_depth_m": MINIMUM_WATER_DEPTH_M,
+                "land_polygons": [],
+            },
+            source_data_mode="SYNTHETIC",
+            redacted_endpoint="synthetic://flat-bathymetry",
             rows_received=1,
         ),
         "khoa_roms_blocked_fixture": fixture_manifest(
