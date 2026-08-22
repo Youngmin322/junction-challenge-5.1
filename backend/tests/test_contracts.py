@@ -31,8 +31,8 @@ def service():
     )
 
 
-def test_registry_contains_approved_twelve_sources():
-    assert len(SOURCE_REGISTRY) == 12
+def test_registry_contains_approved_thirteen_sources():
+    assert len(SOURCE_REGISTRY) == 13
     assert "nifs_jelly_catalog" in SOURCE_REGISTRY
     assert "khoa_roms_blocked_fixture" in SOURCE_REGISTRY
 

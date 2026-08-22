@@ -49,3 +49,4 @@ __pycache__/
 /packages/risk-zone/node_modules/
 /packages/risk-zone/dist/
 /packages/risk-zone/demo/dist/
+/engines/risk-zone/node_modules/

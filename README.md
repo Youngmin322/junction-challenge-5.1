@@ -12,6 +12,7 @@
 | `backend/` | FastAPI REST, 단일 MCP 서버, 자료 출처·이동·감시격자 계산 |
 | `backend/collectors/` | KHOA/NIFS 공공데이터 수집기 3종 |
 | `packages/risk-zone/` | TypeScript 조건부 입자 연결 계산과 MapLibre 데모 |
+| `engines/risk-zone/` | JellyGuard가 호출하는 TypeScript 위험영역 엔진과 브리지 |
 | `docs/collectors/` | 수집기 설계와 해류 통합 설명 |
 
 ## 빠른 실행
@@ -22,6 +23,7 @@ Node.js 24 이상, Python 3.11 이상, `uv`가 필요합니다.
 cp .env.example .env
 npm install
 npm --prefix packages/risk-zone install
+npm --prefix engines/risk-zone install
 uv sync --project backend --dev
 npm run dev
 ```
@@ -38,8 +40,8 @@ Copilot CLI에 로그인되어 있으면 `COPILOT_GITHUB_TOKEN`은 비워도 됩
 ## 하나로 합쳐진 흐름
 
 1. 공공데이터 수집기가 해파리, 해류, 적조·정선해양 자료를 정규화합니다.
-2. JellyGuard가 출처와 자료 모드를 보존하고 조건부 이동·감시격자 계산을 제공합니다.
-3. TypeScript 위험영역 패키지가 해류·수심·게이트 입력의 정밀 입자 계산과 지도 데모를 제공합니다.
+2. JellyGuard가 출처와 자료 모드를 보존하고 KHOA ROMS 격자 자료의 가용·제외 사유를 구분해 보여줍니다.
+3. TypeScript 위험영역 엔진이 JellyGuard의 MCP 요청을 받아 조건부 입자 연결 계산을 수행하고, 별도 패키지가 지도 데모를 제공합니다.
 4. Copilot 도구 서버가 JellyGuard REST를 읽어 데이터 상태와 품질검사 결과를 설명합니다.
 
 Copilot에 등록되는 도구는 `list_datasets`, `get_dataset_status`,

@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from jellyguard.adapters.public_collectors import PublicCollectors
 from jellyguard.composition import create_service
 from jellyguard.config.settings import Settings, load_settings
-from jellyguard.domain.services import DomainService
+from jellyguard.domain.services import SYNTHETIC_ENGINE_ID, DomainService
 from jellyguard.mcp.server import create_mcp_server
 
 
@@ -47,6 +47,7 @@ class RunRequest(BaseModel):
     gate_mapping: str = "DEMO_GATE"
     boundary_rule: str | None = None
     allowed_modes: list[str] = Field(default_factory=lambda: ["CACHED"])
+    engine: str = SYNTHETIC_ENGINE_ID
 
 
 class IntersectRequest(BaseModel):
@@ -220,6 +221,7 @@ def create_app(settings: Settings | None = None, service: DomainService | None =
             gate_mapping=request.gate_mapping,
             boundary_rule=request.boundary_rule,
             allowed_modes=request.allowed_modes,
+            engine=request.engine,
         ).model_dump(mode="json")
 
     @app.get("/v1/hanul/zones")

@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -86,6 +86,9 @@ PUBLIC_REASON = {
 TTL_SECONDS = {
     "nifs_jelly_catalog": (10 * 86400, 45 * 86400),
     "khoa_tw_recent_hanul": (3 * 3600, 24 * 3600),
+    # ROMS is an hourly surface forecast; issued_at is the first forecast hour, so a run
+    # stays usable for a while after release but must not be presented as a nowcast.
+    "khoa_roms_live": (6 * 3600, 24 * 3600),
     "historical_observation_fixture": (float("inf"), float("inf")),
     "nifs_redtide_list": (7 * 86400, 30 * 86400),
     "nifs_soo_list": (7 * 86400, 30 * 86400),
@@ -149,6 +152,15 @@ class ProviderNoDataError(ValueError):
 class PublicDataClient:
     NIFS_ENDPOINT = "https://www.nifs.go.kr/api/OpenAPI_json"
     KHOA_TW_ENDPOINT = "https://apis.data.go.kr/1192136/twRecent/GetTWRecentApiService"
+    KHOA_ROMS_ENDPOINT = "https://apis.data.go.kr/1192136/roms/GetRomsApiService"
+    ROMS_HANUL_BBOX: ClassVar[dict[str, float]] = {
+        "ymin": 36.99,
+        "ymax": 37.14,
+        "xmin": 129.36,
+        "xmax": 129.48,
+    }
+    ROMS_PAGE_SIZE = 300
+    ROMS_MAX_PAGES = 60
 
     def __init__(self, settings: Settings, clock: Callable[[], datetime]) -> None:
         self.settings = settings
@@ -163,6 +175,8 @@ class PublicDataClient:
             return self._fetch_nifs_context("nifs_soo_list", "sooList")
         if source_id == "khoa_tw_recent_hanul":
             return self._fetch_khoa_points()
+        if source_id == "khoa_roms_live":
+            return self._fetch_khoa_roms()
         raise LookupError(source_id)
 
     def _client(self) -> httpx.Client:
@@ -393,6 +407,138 @@ class PublicDataClient:
             issued_at=issued_at,
             request_spec={"station_codes": ["HB_0007", "HB_0008", "HB_0009"]},
         )
+
+    def _fetch_khoa_roms(self) -> dict[str, Any]:
+        """Fetch the KHOA ROMS surface forecast grid covering the Hanul demo domain.
+
+        The provider pages a (grid point x forecast hour) product, so one bbox query
+        returns many rows per cell. Pages are followed until ``totalCount`` is reached,
+        the page cap is hit, or the live budget expires; a truncated read is reported as
+        ``partial`` instead of being silently trimmed.
+        """
+        bbox = dict(self.ROMS_HANUL_BBOX)
+        rows: list[dict[str, Any]] = []
+        status_code = 200
+        result_code = "00"
+        total_count: int | None = None
+        pages_received = 0
+        failed_pages: list[int] = []
+        partial = False
+        started_at = time.monotonic()
+        with self._client() as client:
+            for page_no in range(1, self.ROMS_MAX_PAGES + 1):
+                if time.monotonic() - started_at >= self.settings.live_budget_s:
+                    partial = True
+                    failed_pages.append(page_no)
+                    break
+                response = self._get(
+                    client,
+                    self.KHOA_ROMS_ENDPOINT,
+                    params={
+                        "serviceKey": self.settings.khoa_key,
+                        "type": "json",
+                        "numOfRows": self.ROMS_PAGE_SIZE,
+                        "pageNo": page_no,
+                        **bbox,
+                    },
+                )
+                status_code = response.status_code
+                if response.status_code in {401, 403}:
+                    raise PermissionError("upstream authorization rejected")
+                response.raise_for_status()
+                payload = response.json()
+                header = payload.get("header") or {}
+                result_code = str(header.get("resultCode", ""))
+                if result_code and result_code != "00":
+                    if result_code in {"20", "30", "31", "32"}:
+                        raise PermissionError("upstream authorization rejected")
+                    if result_code == "03":
+                        break
+                    raise ValueError(f"provider result {result_code}")
+                body = payload.get("body") or {}
+                if total_count is None and body.get("totalCount") is not None:
+                    total_count = int(body["totalCount"])
+                items = (body.get("items") or {}).get("item") or []
+                if isinstance(items, dict):
+                    items = [items]
+                if not items:
+                    break
+                pages_received += 1
+                for item in items:
+                    rows.append(
+                        {
+                            "lat": item.get("lat"),
+                            "lon": item.get("lot"),
+                            "valid_at": item.get("predcDt"),
+                            "current_direction": item.get("crdir"),
+                            "current_speed": item.get("crsp"),
+                            "water_temperature": item.get("wtem"),
+                            "crdir_convention": "UNVERIFIED",
+                        }
+                    )
+                if total_count is not None and len(rows) >= total_count:
+                    break
+            else:
+                partial = total_count is not None and len(rows) < total_count
+        if not rows:
+            raise ProviderNoDataError("no valid rows")
+        if total_count is not None and len(rows) < total_count:
+            partial = True
+        grid_summary = self._summarize_roms_grid(rows, bbox, total_count)
+        # The provider publishes forecast hours but never the model run time, so the age of
+        # this field is genuinely unknown. Reporting a guessed issue time would let a stale
+        # run pass a freshness Gate, so the age stays unknown and the forecast window is
+        # carried in the grid summary for the horizon Gate to judge instead.
+        issued_at = None
+        record = self._record(
+            "khoa_roms_live",
+            rows,
+            status_code,
+            result_code or "00",
+            self.KHOA_ROMS_ENDPOINT,
+            issued_at=issued_at,
+            request_spec={"bbox": bbox, "num_of_rows": self.ROMS_PAGE_SIZE},
+        )
+        record["pages_received"] = pages_received
+        record["partial"] = partial
+        record["failed_pages"] = failed_pages
+        record["rows_expected"] = total_count
+        record["grid_summary"] = grid_summary
+        return record
+
+    @staticmethod
+    def _summarize_roms_grid(
+        rows: list[dict[str, Any]],
+        bbox: dict[str, float],
+        total_count: int | None,
+    ) -> dict[str, Any]:
+        """Describe the returned field so coverage Gates read measurements, not promises."""
+        lats = sorted({row["lat"] for row in rows if row.get("lat") is not None})
+        lons = sorted({row["lon"] for row in rows if row.get("lon") is not None})
+        cells = sorted({(row["lat"], row["lon"]) for row in rows if row.get("lat") is not None})
+        times = sorted({row["valid_at"] for row in rows if row.get("valid_at")})
+        return {
+            "requested_bbox": bbox,
+            "cell_count": len(cells),
+            "lat_count": len(lats),
+            "lon_count": len(lons),
+            "lat_spacing_deg": round(lats[1] - lats[0], 6) if len(lats) > 1 else None,
+            "lon_spacing_deg": round(lons[1] - lons[0], 6) if len(lons) > 1 else None,
+            "covered_bbox": {
+                "ymin": lats[0] if lats else None,
+                "ymax": lats[-1] if lats else None,
+                "xmin": lons[0] if lons else None,
+                "xmax": lons[-1] if lons else None,
+            },
+            "timestep_count": len(times),
+            "valid_from_local": times[0] if times else None,
+            "valid_to_local": times[-1] if times else None,
+            "issue_time_published": False,
+            "rows_expected": total_count,
+            "is_area_field": len(cells) > 1,
+            "crdir_convention": "UNVERIFIED",
+            "depth_class": "surface_only",
+        }
 
     def _record(
         self,
@@ -638,4 +784,5 @@ class SourceResolver:
             "nifs_redtide_list": self.settings.nifs_redtide_key,
             "nifs_soo_list": self.settings.nifs_soo_key,
             "khoa_roms_live": self.settings.khoa_key,
+            "nifs_jelly_detail2_unverified": self.settings.nifs_jelly_key,
         }.get(source_id)

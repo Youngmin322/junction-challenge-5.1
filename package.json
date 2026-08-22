@@ -13,12 +13,14 @@
     "dev:risk": "npm --prefix packages/risk-zone run demo",
     "build": "vinext build",
     "build:risk": "npm --prefix packages/risk-zone run build",
+    "build:engine": "npm --prefix engines/risk-zone run build:bridge",
     "start": "vinext start",
     "lint": "eslint app server vite.config.ts next.config.ts --ignore-pattern dist --ignore-pattern .next",
     "test:risk": "npm --prefix packages/risk-zone test",
+    "test:engine": "npm --prefix engines/risk-zone test",
     "test:backend": "cd backend && .venv/bin/python -m pytest",
-    "test": "npm run test:risk && npm run test:backend",
-    "verify": "npm run lint && npm run build && npm run build:risk && npm test"
+    "test": "npm run test:risk && npm run test:engine && npm run test:backend",
+    "verify": "npm run lint && npm run build && npm run build:risk && npm run build:engine && npm test"
   },
   "dependencies": {
     "@github/copilot-sdk": "^1.0.11",
