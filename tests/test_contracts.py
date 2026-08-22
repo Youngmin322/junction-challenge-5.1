@@ -31,10 +31,13 @@ def service():
     )
 
 
-def test_registry_contains_approved_twelve_sources():
-    assert len(SOURCE_REGISTRY) == 12
+def test_registry_contains_approved_thirteen_sources():
+    assert len(SOURCE_REGISTRY) == 13
     assert "nifs_jelly_catalog" in SOURCE_REGISTRY
     assert "khoa_roms_blocked_fixture" in SOURCE_REGISTRY
+    # A direction reference is not a field candidate; it must never be a transport input.
+    assert SOURCE_REGISTRY["khoa_crnt_fcst_reference"].source_class == "direction_reference"
+    assert SOURCE_REGISTRY["khoa_crnt_fcst_reference"].optional is True
 
 
 def test_catalog_is_context_only_and_has_no_observation_fields():

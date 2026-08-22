@@ -61,6 +61,13 @@ SOURCE_REGISTRY = {
         ),
         SourceDefinition("khoa_roms_live", "field", (DataMode.LIVE,), None, True),
         SourceDefinition(
+            "khoa_crnt_fcst_reference",
+            "direction_reference",
+            (DataMode.LIVE,),
+            ClaimType.CONTEXT,
+            True,
+        ),
+        SourceDefinition(
             "nifs_jelly_detail2_unverified",
             "report_catalog",
             (DataMode.LIVE,),

@@ -153,6 +153,13 @@ class PublicDataClient:
     NIFS_ENDPOINT = "https://www.nifs.go.kr/api/OpenAPI_json"
     KHOA_TW_ENDPOINT = "https://apis.data.go.kr/1192136/twRecent/GetTWRecentApiService"
     KHOA_ROMS_ENDPOINT = "https://apis.data.go.kr/1192136/roms/GetRomsApiService"
+    KHOA_CRNT_FCST_ENDPOINT = (
+        "https://apis.data.go.kr/1192136/crntFcstTime/GetCrntFcstTimeApiService"
+    )
+    # Tidal-current forecast points are published only for the west, south and southeast
+    # coasts. 16LTC14 Ulsan New Port is the northernmost one and still sits roughly 180 km
+    # south of Hanul, so this source is a convention reference, never a Hanul field.
+    CRNT_FCST_REFERENCE_OBS_CODE = "16LTC14"
     ROMS_HANUL_BBOX: ClassVar[dict[str, float]] = {
         "ymin": 36.99,
         "ymax": 37.14,
@@ -177,6 +184,8 @@ class PublicDataClient:
             return self._fetch_khoa_points()
         if source_id == "khoa_roms_live":
             return self._fetch_khoa_roms()
+        if source_id == "khoa_crnt_fcst_reference":
+            return self._fetch_khoa_crnt_fcst()
         raise LookupError(source_id)
 
     def _client(self) -> httpx.Client:
@@ -540,6 +549,70 @@ class PublicDataClient:
             "depth_class": "surface_only",
         }
 
+    def _fetch_khoa_crnt_fcst(self) -> dict[str, Any]:
+        """Fetch a KHOA tidal-current forecast point used only as a direction reference.
+
+        This endpoint reports ``crdir`` as a Korean 16-point compass **name**, not degrees,
+        and ``crsp`` in a unit the provider does not document. Both are preserved verbatim
+        so a later convention check compares raw provider output rather than a guess made
+        here.
+        """
+        obs_code = self.CRNT_FCST_REFERENCE_OBS_CODE
+        request_date = self.clock().astimezone(ZoneInfo("Asia/Seoul")).strftime("%Y%m%d")
+        with self._client() as client:
+            response = self._get(
+                client,
+                self.KHOA_CRNT_FCST_ENDPOINT,
+                params={
+                    "serviceKey": self.settings.khoa_key,
+                    "type": "json",
+                    "obsCode": obs_code,
+                    "date": request_date,
+                },
+            )
+        if response.status_code in {401, 403}:
+            raise PermissionError("upstream authorization rejected")
+        response.raise_for_status()
+        payload = response.json()
+        header = payload.get("header") or {}
+        result_code = str(header.get("resultCode", ""))
+        if result_code and result_code != "00":
+            if result_code in {"20", "30", "31", "32"}:
+                raise PermissionError("upstream authorization rejected")
+            raise ValueError(f"provider result {result_code}")
+        items = ((payload.get("body") or {}).get("items") or {}).get("item") or []
+        if isinstance(items, dict):
+            items = [items]
+        rows = [
+            {
+                "obs_code": obs_code,
+                "station_name": item.get("obsvtrNm"),
+                "lat": item.get("lat"),
+                "lon": item.get("lot"),
+                "valid_at": item.get("predcDt"),
+                "current_direction_text": item.get("crdir"),
+                "current_speed_raw": item.get("crsp"),
+                "crdir_format": "korean_16point_text",
+                "crsp_unit": "UNVERIFIED",
+                "crdir_convention": "UNVERIFIED",
+            }
+            for item in items
+        ]
+        if not rows:
+            raise ProviderNoDataError("no valid rows")
+        record = self._record(
+            "khoa_crnt_fcst_reference",
+            rows,
+            response.status_code,
+            result_code or "00",
+            self.KHOA_CRNT_FCST_ENDPOINT,
+            issued_at=None,
+            request_spec={"obs_code": obs_code, "date": request_date},
+        )
+        record["reference_only"] = True
+        record["distance_note"] = "nearest_forecast_point_is_not_near_hanul"
+        return record
+
     def _record(
         self,
         source_id: str,
@@ -785,4 +858,5 @@ class SourceResolver:
             "nifs_soo_list": self.settings.nifs_soo_key,
             "khoa_roms_live": self.settings.khoa_key,
             "nifs_jelly_detail2_unverified": self.settings.nifs_jelly_key,
+            "khoa_crnt_fcst_reference": self.settings.khoa_key,
         }.get(source_id)

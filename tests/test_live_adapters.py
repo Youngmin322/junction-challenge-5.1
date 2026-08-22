@@ -380,3 +380,50 @@ def test_khoa_roms_no_data_code_raises_provider_no_data(tmp_path, monkeypatch):
     )
     with pytest.raises(ProviderNoDataError):
         current.fetch("khoa_roms_live")
+
+
+def test_khoa_crnt_fcst_preserves_textual_direction_and_unverified_units(tmp_path, monkeypatch):
+    def handler(request):
+        params = request.url.params
+        assert params["obsCode"] == "16LTC14"
+        assert len(params["date"]) == 8
+        return httpx.Response(
+            200,
+            json={
+                "header": {"resultCode": "00"},
+                "body": {
+                    "items": {
+                        "item": [
+                            {
+                                "obsvtrNm": "울산신항",
+                                "lat": 35.4165,
+                                "lot": 129.3991,
+                                "predcDt": "2026-08-23 00:00",
+                                "crdir": "서남서",
+                                "crsp": 10.03,
+                            }
+                        ]
+                    }
+                },
+            },
+        )
+
+    current = client(tmp_path, khoa_key="secret")
+    monkeypatch.setattr(
+        current,
+        "_client",
+        lambda: httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    record = current.fetch("khoa_crnt_fcst_reference")
+    row = record["payload"][0]
+
+    # The provider returns a compass name, not degrees, and an undocumented speed unit.
+    assert row["current_direction_text"] == "서남서"
+    assert row["crdir_format"] == "korean_16point_text"
+    assert row["crsp_unit"] == "UNVERIFIED"
+    assert row["crdir_convention"] == "UNVERIFIED"
+    # No issue time is published, so the age must stay unknown.
+    assert record["issued_at"] is None
+    assert record["reference_only"] is True
+    assert record["request_spec"]["obs_code"] == "16LTC14"

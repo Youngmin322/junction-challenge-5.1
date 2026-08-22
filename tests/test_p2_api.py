@@ -59,7 +59,7 @@ def test_source_status_and_bootstrap_are_public_projection_only(tmp_path):
         headers = {"x-jellyguard-local-key": "local-secret"}
         sources = client.get("/v1/sources/status", headers=headers).json()
         bootstrap = client.get("/v1/dashboard/bootstrap", headers=headers).json()
-        assert len(sources["data"]["sources"]) == 12
+        assert len(sources["data"]["sources"]) == 13
         assert bootstrap["data"]["dashboard_contract"] == "offline_public_watch_cells_v1"
         serialized = str(bootstrap)
         assert "nifs_jelly_key" not in serialized
