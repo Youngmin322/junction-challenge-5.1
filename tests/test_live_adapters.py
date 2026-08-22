@@ -469,7 +469,7 @@ def test_khoa_hf_current_sweeps_all_13_known_stations(tmp_path, monkeypatch):
     assert record["rows_received"] == 13
     assert record["reference_only"] is True
     assert all(row["crdir_convention"] == "UNVERIFIED" for row in record["payload"])
-    assert all(row["distance_to_wolsong_km"] is not None for row in record["payload"])
+    assert all(row["distance_to_hanul_km"] is not None for row in record["payload"])
 
 
 def test_khoa_hf_current_null_observation_station_is_kept_not_dropped(tmp_path, monkeypatch):
@@ -499,7 +499,7 @@ def test_khoa_hf_current_null_observation_station_is_kept_not_dropped(tmp_path, 
     assert null_row["current_direction"] is None
     assert null_row["current_speed"] is None
     # A null observation still carries a real position, so distance is still computable.
-    assert null_row["distance_to_wolsong_km"] is not None
+    assert null_row["distance_to_hanul_km"] is not None
 
 
 @pytest.mark.parametrize("result_code", ["20", "30", "31", "32"])
@@ -534,13 +534,11 @@ def test_khoa_hf_current_http_auth_failure_is_classified(tmp_path, monkeypatch, 
         current.fetch("khoa_hf_current_reference")
 
 
-def test_khoa_hf_current_distance_to_wolsong_matches_haversine_math(tmp_path, monkeypatch):
+def test_khoa_hf_current_distance_to_hanul_matches_haversine_math(tmp_path, monkeypatch):
     """Pohang harbour (HF_0071) is at lat 36.01926, lon 129.44425 (live-probed).
-    Wolsong is at lat 35.7146, lon 129.4750. Deriving the great-circle distance
-    directly (not just trusting the adapter) with R = 6371.0088 km gives ~34 km --
-    the closest of any live HF station to a Gyeongbuk plant. Hanul is excluded from
-    this field: the closest live HF station to Hanul is 71 km away, so a
-    distance-to-Hanul figure here would never point at anything actionable."""
+    Hanul is at lat 37.05, lon 129.42. Deriving the great-circle distance directly
+    (not just trusting the adapter) with R = 6371.0088 km gives ~114.6 km, in line
+    with the "closest station, still ~120 km south" fact established by probing."""
     from math import asin, cos, radians, sin, sqrt
 
     def expected_km(lat1, lon1, lat2, lon2):
@@ -552,8 +550,8 @@ def test_khoa_hf_current_distance_to_wolsong_matches_haversine_math(tmp_path, mo
         return 2 * r * asin(sqrt(a))
 
     pohang_lat, pohang_lon = 36.01926, 129.44425
-    expected = expected_km(pohang_lat, pohang_lon, 35.7146, 129.4750)
-    assert 30 < expected < 38
+    expected = expected_km(pohang_lat, pohang_lon, 37.05, 129.42)
+    assert 110 < expected < 120
 
     def handler(request):
         code = request.url.params["obsCode"]
@@ -573,8 +571,7 @@ def test_khoa_hf_current_distance_to_wolsong_matches_haversine_math(tmp_path, mo
     )
     record = current.fetch("khoa_hf_current_reference")
     pohang_row = next(row for row in record["payload"] if row["station_code"] == "HF_0071")
-    assert pohang_row["distance_to_wolsong_km"] == round(expected, 1)
-    assert "distance_to_hanul_km" not in pohang_row
+    assert pohang_row["distance_to_hanul_km"] == round(expected, 1)
 
 
 def test_khoa_hf_current_live_budget_stops_before_upstream_call(tmp_path):
