@@ -670,3 +670,37 @@ def test_synthetic_runs_are_untouched_by_window_expansion():
     assert "domain_expansion" not in computed
     assert "domain_exit_fraction" not in computed
     assert not any("확장" in warning for warning in run.warnings)
+
+
+def test_expanded_run_carries_its_own_grid_so_cell_labels_stay_meaningful():
+    """Expansion moves the grid origin, so the run must publish the grid it actually used.
+
+    Without this, ``intersect_zone`` would rebuild the requested domain and compare cell
+    labels produced against a different origin — a silent mismatch rather than an error.
+    """
+    from jellyguard.domain.transport import DomainGrid, MeasuredField, run_measured_transport
+
+    grid = DomainGrid(
+        domain_id="TEST_DOMAIN",
+        lon_min=129.40,
+        lon_max=129.48,
+        lat_min=37.05,
+        lat_max=37.11,
+        spacing_deg=0.01,
+    )
+    field = MeasuredField.from_rows(_measured_rows(0.0, 0.5), field_id="t", convention="TOWARD")
+    seeds = [{"seed_id": "S1", "geometry": {"type": "Point", "coordinates": [129.44, 37.08]}}]
+
+    _, artifact = run_measured_transport(
+        seeds=seeds, grid=grid, field=field, horizons_h=[1], run_seed=1
+    )
+
+    assert artifact["grid"]["spacing_deg"] == grid.spacing_deg
+    assert artifact["grid"]["domain_id"] == grid.domain_id
+    expansion = artifact["domain_expansion"]
+    if expansion["expansions_applied"]:
+        # The published grid must be the expanded one, not the one that was requested.
+        assert artifact["grid"]["lon_min"] < grid.lon_min
+        assert artifact["grid"]["lat_min"] < grid.lat_min
+    else:
+        assert artifact["grid"]["lon_min"] == grid.lon_min

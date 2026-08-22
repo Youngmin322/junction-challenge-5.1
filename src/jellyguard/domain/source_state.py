@@ -162,13 +162,15 @@ class PublicDataClient:
     # south of Hanul, so this source is a convention reference, never a Hanul field.
     CRNT_FCST_REFERENCE_OBS_CODE = "16LTC14"
     ROMS_HANUL_BBOX: ClassVar[dict[str, float]] = {
-        # Padded one grid cell beyond the transport domain on every side. Bilinear
-        # sampling needs all four surrounding points, so a field clipped to the domain
-        # would strand every particle near the edge with no neighbours to interpolate.
-        "ymin": 36.95,
-        "ymax": 37.18,
-        "xmin": 129.32,
-        "xmax": 129.52,
+        # Wider than the transport domain for two reasons. Bilinear sampling needs all
+        # four surrounding points, so a field clipped to the domain strands every edge
+        # particle with no neighbours. And the computation window expands by 25% per
+        # attempt when particles leave it, which the field footprint has to allow for —
+        # otherwise expansion stops immediately at `field_footprint_limit`.
+        "ymin": 36.90,
+        "ymax": 37.21,
+        "xmin": 129.30,
+        "xmax": 129.57,
     }
     ROMS_PAGE_SIZE = 300
     ROMS_MAX_PAGES = 60

@@ -62,6 +62,22 @@ class DomainGrid:
             spacing_deg=self.spacing_deg,
         )
 
+    def clipped_to(self, bounds: dict[str, float], *, floor: DomainGrid) -> DomainGrid:
+        """Clip each edge to ``bounds`` without shrinking inside ``floor``.
+
+        ``bounds`` is where measured water exists, which near a coast is narrower than
+        what was requested. Clipping to it keeps expansion honest; the ``floor`` keeps a
+        clip from eating into the window the caller actually asked for.
+        """
+        return DomainGrid(
+            domain_id=self.domain_id,
+            lon_min=min(floor.lon_min, max(self.lon_min, bounds["lon_min"])),
+            lon_max=max(floor.lon_max, min(self.lon_max, bounds["lon_max"])),
+            lat_min=min(floor.lat_min, max(self.lat_min, bounds["lat_min"])),
+            lat_max=max(floor.lat_max, min(self.lat_max, bounds["lat_max"])),
+            spacing_deg=self.spacing_deg,
+        )
+
     def as_bbox(self) -> dict[str, float]:
         return {
             "lon_min": self.lon_min,
@@ -673,10 +689,15 @@ def run_measured_transport(
         )
         if not outcome["insufficient"]:
             break
-        candidate = attempt_grid.expanded(DOMAIN_EXPANSION_FACTOR)
-        if not field.covers_grid(candidate):
-            # Widening past the measured footprint would only turn field_missing members
-            # into in-domain ones without adding measured water. Stop and say so.
+        # Grow only where the field actually has water. The western edge here is a
+        # coastline, not a request boundary, so demanding full containment would block
+        # every expansion forever. Each edge is clipped to the measured footprint but
+        # never pulled inside the window that was originally asked for.
+        candidate = attempt_grid.expanded(DOMAIN_EXPANSION_FACTOR).clipped_to(
+            field.covered_bbox, floor=grid
+        )
+        if candidate.as_bbox() == attempt_grid.as_bbox():
+            # Clipping left nothing to gain: every direction is already at the footprint.
             stopped_reason = "field_footprint_limit"
             break
         if attempts > DOMAIN_EXPANSION_MAX_ATTEMPTS:
@@ -737,6 +758,14 @@ def run_measured_transport(
         "members": members,
         "run_seed": run_seed,
         "domain_expansion": domain_expansion,
+        # Expansion moves the grid origin, so a cell label from this run only means what
+        # it says against this grid. Consumers must rebuild it rather than assume the
+        # requested domain, or the same rXXcYY would silently denote a different box.
+        "grid": {
+            "domain_id": attempt_grid.domain_id,
+            **attempt_grid.as_bbox(),
+            "spacing_deg": attempt_grid.spacing_deg,
+        },
         "reproducibility": reproducibility,
     }
     return public, artifact

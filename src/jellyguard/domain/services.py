@@ -1363,7 +1363,21 @@ class DomainService:
                 run_id=run_id,
             )
 
-        grid = DomainGrid.from_fixture(self.synthetic_domain)
+        # A run that expanded its computation window carries its own grid, and its cell
+        # labels are only meaningful against that grid. Falling back to the requested
+        # domain would compare labels from two different origins.
+        grid = (
+            DomainGrid(
+                domain_id=artifact["grid"]["domain_id"],
+                lon_min=artifact["grid"]["lon_min"],
+                lon_max=artifact["grid"]["lon_max"],
+                lat_min=artifact["grid"]["lat_min"],
+                lat_max=artifact["grid"]["lat_max"],
+                spacing_deg=artifact["grid"]["spacing_deg"],
+            )
+            if artifact.get("grid")
+            else DomainGrid.from_fixture(self.synthetic_domain)
+        )
         zones_by_id = {zone["zone_id"]: zone for zone in artifact["zones"]}
         zone_results = []
         for zone_id in zone_ids:
