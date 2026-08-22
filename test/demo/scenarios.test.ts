@@ -44,6 +44,38 @@ describe('fictional map scenarios', () => {
     ).toBeGreaterThan(0);
   });
 
+  it('changes the Hanul cross-current enough to visibly rotate the fan over time', () => {
+    const scenario = getDemoScenario('hanul-approach');
+    const startedAt = new Date(scenario.input.seed.observedAt);
+    const sixHoursLater = new Date(startedAt.valueOf() + 6 * 60 * 60 * 1_000);
+    const request = {
+      position: scenario.intakePosition,
+      depthMeters: scenario.input.seed.depthMeters,
+    };
+    const initial = scenario.input.offshoreFlow.velocityAt({ ...request, validAt: startedAt });
+    const later = scenario.input.offshoreFlow.velocityAt({ ...request, validAt: sixHoursLater });
+
+    expect(initial).not.toBeNull();
+    expect(later).not.toBeNull();
+    expect(Math.abs(later!.vMetersPerSecond - initial!.vMetersPerSecond)).toBeGreaterThan(0.05);
+  });
+
+  it('changes the Hanul speed enough to visibly resize the fan over time', () => {
+    const scenario = getDemoScenario('hanul-approach');
+    const startedAt = new Date(scenario.input.seed.observedAt);
+    const sixHoursLater = new Date(startedAt.valueOf() + 6 * 60 * 60 * 1_000);
+    const request = {
+      position: scenario.intakePosition,
+      depthMeters: scenario.input.seed.depthMeters,
+    };
+    const initial = scenario.input.offshoreFlow.velocityAt({ ...request, validAt: startedAt })!;
+    const later = scenario.input.offshoreFlow.velocityAt({ ...request, validAt: sixHoursLater })!;
+    const initialSpeed = Math.hypot(initial.uMetersPerSecond, initial.vMetersPerSecond);
+    const laterSpeed = Math.hypot(later.uMetersPerSecond, later.vMetersPerSecond);
+
+    expect(Math.abs(laterSpeed - initialSpeed)).toBeGreaterThan(0.05);
+  });
+
   it('turns the tidal scenario flow after four hours', () => {
     const scenario = getDemoScenario('tidal-turn');
     const position = scenario.input.seed.geometry.kind === 'point'

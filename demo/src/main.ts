@@ -11,8 +11,8 @@ import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 import type { Feature, FeatureCollection, LineString, Point, Polygon } from 'geojson';
 import { createLocalProjection } from '../../src/risk-zone/geo.js';
 import { simulateConditionalConnectivity } from '../../src/risk-zone/simulation.js';
-import type { Position, SimulationResult } from '../../src/risk-zone/types.js';
-import { filterArrivalBands, prepareApproachBands } from './map-data.js';
+import type { Position, VelocitySample } from '../../src/risk-zone/types.js';
+import { buildCurrentOrientedFanEnvelope } from './map-data.js';
 import { demoScenarios, getDemoScenario, type DemoScenario } from './scenarios.js';
 import './style.css';
 
@@ -59,11 +59,12 @@ timeline.addEventListener('input', () => renderScenario(false));
 
 function renderScenario(fitViewport: boolean): void {
   const selectedHours = Number(timeline.value);
-  const maximumMinutes = selectedHours * 60;
-  const approachBands = prepareApproachBands(
-    result.earliestArrivalBands,
-    selectedScenario.intakePosition,
-  );
+  const current = representativeCurrentAt(selectedScenario, selectedHours);
+  const approachBands = buildCurrentOrientedFanEnvelope({
+    intakePosition: selectedScenario.intakePosition,
+    uMetersPerSecond: current.uMetersPerSecond,
+    vMetersPerSecond: current.vMetersPerSecond,
+  });
 
   timelineValue.textContent = `${selectedHours}시간`;
   scenarioDescription.textContent = selectedScenario.description;
@@ -75,46 +76,36 @@ function renderScenario(fitViewport: boolean): void {
     : result.disclaimer;
 
   source(map, 'coast').setData(selectedScenario.coast);
-  source(map, 'approach-bands').setData(filterArrivalBands(approachBands, maximumMinutes));
-  source(map, 'current-arrows').setData(buildCurrentArrows(selectedScenario, selectedHours));
-  source(map, 'trajectories').setData(buildTrajectories(
-    result,
-    maximumMinutes,
-    selectedScenario.input.config?.timeStepMinutes ?? 15,
+  source(map, 'approach-bands').setData(approachBands);
+  source(map, 'current-arrows').setData(buildCurrentArrows(
+    selectedScenario,
+    selectedHours,
+    current,
   ));
   source(map, 'seed').setData(buildSeed(selectedScenario));
   source(map, 'gate').setData(buildGate(selectedScenario));
   source(map, 'intake').setData(buildIntakeMarkers(selectedScenario));
-  updateStatus(maximumMinutes);
+  updateStatus(current);
 
   if (fitViewport) fitScenario(map, selectedScenario);
 }
 
-function updateStatus(maximumMinutes: number): void {
-  const simulationStart = new Date(selectedScenario.input.seed.observedAt).valueOf();
-  const arrivalMinutes = result.particleTrajectories.flatMap((trajectory) => {
-    if (!trajectory.firstGateArrivalAt) return [];
-    return [(new Date(trajectory.firstGateArrivalAt).valueOf() - simulationStart) / 60_000];
-  });
-  const reachedCount = arrivalMinutes.filter((minutes) => minutes <= maximumMinutes).length;
-  const total = result.particleTrajectories.length;
-  const finalSummary = result.horizonSummaries.at(-1);
+function updateStatus(current: VelocitySample): void {
+  const speed = Math.hypot(current.uMetersPerSecond, current.vMetersPerSecond);
+  const bearing = normalizeDegrees(
+    (Math.atan2(current.uMetersPerSecond, current.vMetersPerSecond) * 180) / Math.PI,
+  );
 
-  pathStatus.textContent = reachedCount > 0
-    ? '감시선 연결 경로 확인됨'
-    : '선택 시간에는 아직 감시선 연결 전';
-  pathStatus.dataset.connected = String(reachedCount > 0);
-  connectionValue.textContent = `${reachedCount} / ${total}`;
-  etaValue.textContent = finalSummary?.etaMinutes.p50 === null || finalSummary?.etaMinutes.p50 === undefined
-    ? '도달 없음'
-    : `${formatMinutes(finalSummary.etaMinutes.p50)} (p50)`;
+  pathStatus.textContent = '전체 부채꼴 영역 표시 중';
+  pathStatus.dataset.connected = 'true';
+  connectionValue.textContent = `${compassDirection(bearing)} ${Math.round(bearing)}°`;
+  etaValue.textContent = `${speed.toFixed(2)} m/s`;
 }
 
 function addSourcesAndLayers(target: Map): void {
   target.addSource('coast', { type: 'geojson', data: emptyCollection<Polygon>() });
   target.addSource('approach-bands', { type: 'geojson', data: emptyCollection<Polygon>() });
   target.addSource('current-arrows', { type: 'geojson', data: emptyCollection<LineString>() });
-  target.addSource('trajectories', { type: 'geojson', data: emptyCollection<LineString>() });
   target.addSource('seed', { type: 'geojson', data: emptyCollection<Point>() });
   target.addSource('gate', { type: 'geojson', data: emptyCollection<LineString>() });
   target.addSource('intake', { type: 'geojson', data: emptyCollection<Point>() });
@@ -141,10 +132,6 @@ function addSourcesAndLayers(target: Map): void {
   target.addLayer({
     id: 'approach-bands-outline', type: 'line', source: 'approach-bands',
     paint: { 'line-color': '#fff7ed', 'line-width': 0.45, 'line-opacity': 0.46 },
-  });
-  target.addLayer({
-    id: 'trajectories-line', type: 'line', source: 'trajectories',
-    paint: { 'line-color': '#881337', 'line-width': 1.05, 'line-opacity': 0.34 },
   });
   target.addLayer({
     id: 'current-arrows-line', type: 'line', source: 'current-arrows',
@@ -229,21 +216,37 @@ function addSourcesAndLayers(target: Map): void {
 function buildCurrentArrows(
   scenario: DemoScenario,
   selectedHours: number,
+  representativeCurrent: VelocitySample,
 ): FeatureCollection<LineString> {
-  const seed = seedPosition(scenario);
-  const seedProjection = createLocalProjection(seed);
-  const [intakeX, intakeY] = seedProjection.toLocal(scenario.intakePosition);
+  const envelope = buildCurrentOrientedFanEnvelope({
+    intakePosition: scenario.intakePosition,
+    uMetersPerSecond: representativeCurrent.uMetersPerSecond,
+    vMetersPerSecond: representativeCurrent.vMetersPerSecond,
+  });
+  const envelopeProperties = envelope.features[0]!.properties;
+  const speed = Math.hypot(
+    representativeCurrent.uMetersPerSecond,
+    representativeCurrent.vMetersPerSecond,
+  );
+  const upstreamX = speed > 0 ? -representativeCurrent.uMetersPerSecond / speed : 1;
+  const upstreamY = speed > 0 ? -representativeCurrent.vMetersPerSecond / speed : 0;
+  const perpendicularX = -upstreamY;
+  const perpendicularY = upstreamX;
+  const projection = createLocalProjection(scenario.intakePosition);
   const requestedAt = new Date(
     new Date(scenario.input.seed.observedAt).valueOf() + selectedHours * 3_600_000,
   );
   const features: Array<Feature<LineString>> = [];
 
-  for (const fraction of [0.08, 0.3, 0.52, 0.74]) {
-    for (const perpendicularOffset of [-650, 650]) {
-      const distance = Math.hypot(intakeX, intakeY) || 1;
-      const position = seedProjection.toGeographic([
-        intakeX * fraction - (intakeY / distance) * perpendicularOffset,
-        intakeY * fraction + (intakeX / distance) * perpendicularOffset,
+  for (const fraction of [0.18, 0.4, 0.62, 0.84]) {
+    const distanceFromIntake = envelopeProperties.envelopeLengthMeters * fraction;
+    const halfWidth = distanceFromIntake * Math.tan(
+      (envelopeProperties.halfAngleDegrees * Math.PI) / 180,
+    );
+    for (const lateralFraction of [-0.38, 0.38]) {
+      const position = projection.toGeographic([
+        upstreamX * distanceFromIntake + perpendicularX * halfWidth * lateralFraction,
+        upstreamY * distanceFromIntake + perpendicularY * halfWidth * lateralFraction,
       ]);
       const velocity = scenario.input.offshoreFlow.velocityAt({
         position,
@@ -268,28 +271,22 @@ function buildCurrentArrows(
   return { type: 'FeatureCollection', features };
 }
 
-function buildTrajectories(
-  simulation: SimulationResult,
-  maximumMinutes: number,
-  timeStepMinutes: number,
-): FeatureCollection<LineString> {
-  const maximumCoordinateCount = Math.floor(maximumMinutes / timeStepMinutes) + 1;
-  return {
-    type: 'FeatureCollection',
-    features: simulation.particleTrajectories
-      .map((trajectory) => ({
-        trajectory,
-        coordinates: trajectory.coordinates.slice(0, maximumCoordinateCount),
-      }))
-      .filter(({ coordinates }) => coordinates.length > 1)
-      .map(({ trajectory, coordinates }) => ({
-        type: 'Feature' as const,
-        properties: { particleId: trajectory.id, status: trajectory.status },
-        geometry: {
-          type: 'LineString' as const,
-          coordinates: coordinates.map(toGeoJsonPosition),
-        },
-      })),
+function representativeCurrentAt(
+  scenario: DemoScenario,
+  selectedHours: number,
+): VelocitySample {
+  const validAt = new Date(
+    new Date(scenario.input.seed.observedAt).valueOf() + selectedHours * 3_600_000,
+  );
+  return scenario.input.offshoreFlow.velocityAt({
+    position: scenario.intakePosition,
+    depthMeters: scenario.input.seed.depthMeters,
+    validAt,
+  }) ?? {
+    uMetersPerSecond: 0,
+    vMetersPerSecond: 0,
+    sourceTime: validAt,
+    validAt,
   };
 }
 
@@ -340,9 +337,12 @@ function buildIntakeMarkers(scenario: DemoScenario): FeatureCollection<Point> {
 
 function fitScenario(target: Map, scenario: DemoScenario): void {
   const seed = seedPosition(scenario);
+  const projection = createLocalProjection(scenario.intakePosition);
   const bounds = new LngLatBounds(toMapPosition(seed), toMapPosition(seed));
   bounds.extend(toMapPosition(scenario.sitePosition));
   bounds.extend(toMapPosition(scenario.intakePosition));
+  bounds.extend(toMapPosition(projection.toGeographic([-23_000, -23_000])));
+  bounds.extend(toMapPosition(projection.toGeographic([23_000, 23_000])));
   const gate = scenario.input.gate;
   if (gate.kind === 'endpoints') {
     bounds.extend(toMapPosition(gate.start));
@@ -361,10 +361,13 @@ function midpoint(first: Position, second: Position): [number, number] {
   return [(first[0] + second[0]) / 2, (first[1] + second[1]) / 2];
 }
 
-function formatMinutes(minutes: number): string {
-  const hours = Math.floor(minutes / 60);
-  const remainder = Math.round(minutes % 60);
-  return remainder === 0 ? `${hours}시간` : `${hours}시간 ${remainder}분`;
+function compassDirection(bearingDegrees: number): string {
+  const labels = ['북향', '북동향', '동향', '남동향', '남향', '남서향', '서향', '북서향'];
+  return labels[Math.round(bearingDegrees / 45) % labels.length]!;
+}
+
+function normalizeDegrees(value: number): number {
+  return ((value % 360) + 360) % 360;
 }
 
 function element<ElementType extends Element>(selector: string): ElementType {

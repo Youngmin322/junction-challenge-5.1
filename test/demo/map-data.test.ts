@@ -1,6 +1,10 @@
 import type { FeatureCollection, Polygon } from 'geojson';
 import { describe, expect, it } from 'vitest';
-import { filterArrivalBands, prepareApproachBands } from '../../demo/src/map-data.js';
+import {
+  buildCurrentOrientedFanEnvelope,
+  filterArrivalBands,
+  prepareApproachBands,
+} from '../../demo/src/map-data.js';
 import type { EarliestArrivalCellProperties } from '../../src/risk-zone/types.js';
 
 const bands: FeatureCollection<Polygon, EarliestArrivalCellProperties> = {
@@ -45,5 +49,55 @@ describe('map arrival-band data', () => {
       approachPriority: 'immediate-monitoring',
     });
     expect(filterArrivalBands(prepared, 120).features).toHaveLength(1);
+  });
+});
+
+describe('current-oriented fan envelope', () => {
+  it('keeps all four colour bands while rotating upstream from the current', () => {
+    const westwardCurrent = buildCurrentOrientedFanEnvelope({
+      intakePosition: [129.397, 37.0931],
+      uMetersPerSecond: -0.2,
+      vMetersPerSecond: 0,
+    });
+    const northwardCurrent = buildCurrentOrientedFanEnvelope({
+      intakePosition: [129.397, 37.0931],
+      uMetersPerSecond: 0,
+      vMetersPerSecond: 0.2,
+    });
+
+    expect(westwardCurrent.features.map((feature) => feature.properties.approachPriority)).toEqual([
+      'immediate-monitoring',
+      'near-intake',
+      'approach-corridor',
+      'far-offshore',
+    ]);
+    expect(northwardCurrent.features).toHaveLength(4);
+    expect(westwardCurrent.features[0]?.properties.axisBearingDegrees).toBeCloseTo(90);
+    expect(northwardCurrent.features[0]?.properties.axisBearingDegrees).toBeCloseTo(180);
+
+    const westwardFarCoordinates = westwardCurrent.features[3]!.geometry.coordinates[0]!;
+    const northwardFarCoordinates = northwardCurrent.features[3]!.geometry.coordinates[0]!;
+    expect(westwardFarCoordinates.every(([longitude]) => longitude > 129.397)).toBe(true);
+    expect(northwardFarCoordinates.every(([, latitude]) => latitude < 37.0931)).toBe(true);
+  });
+
+  it('makes fast-current envelopes longer and directionally narrower', () => {
+    const slow = buildCurrentOrientedFanEnvelope({
+      intakePosition: [129.397, 37.0931],
+      uMetersPerSecond: -0.08,
+      vMetersPerSecond: 0,
+    });
+    const fast = buildCurrentOrientedFanEnvelope({
+      intakePosition: [129.397, 37.0931],
+      uMetersPerSecond: -0.5,
+      vMetersPerSecond: 0,
+    });
+
+    expect(fast.features[0]?.properties.envelopeLengthMeters)
+      .toBeGreaterThan(slow.features[0]!.properties.envelopeLengthMeters);
+    expect(fast.features[0]?.properties.halfAngleDegrees)
+      .toBeLessThan(slow.features[0]!.properties.halfAngleDegrees);
+    expect(slow.features).toHaveLength(4);
+    expect(fast.features).toHaveLength(4);
   });
 });

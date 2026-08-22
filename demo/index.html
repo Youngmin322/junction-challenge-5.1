@@ -28,24 +28,24 @@
 
           <div class="control-section timeline-control">
             <div class="control-heading">
-              <label for="timeline">표시 시점</label>
+              <label for="timeline">해류 시점</label>
               <strong id="timeline-value">24시간</strong>
             </div>
             <input id="timeline" type="range" min="0" max="48" value="24" step="1" />
             <div class="timeline-ticks" aria-hidden="true"><span>0h</span><span>24h</span><span>48h</span></div>
-            <p>선택 시간까지 입자가 실제로 지나간 격자와 경로만 표시합니다.</p>
+            <p>선택 시점의 합성 해류에 따라 전체 부채꼴의 방향·길이·폭이 함께 변합니다.</p>
           </div>
 
           <div class="control-section" aria-labelledby="legend-title">
             <p class="section-kicker">02 · APPROACH</p>
             <h2 id="legend-title">조건부 접근 우선순위</h2>
             <ul class="legend-list">
-              <li><span class="swatch swatch-immediate"></span><span><strong>즉시 감시</strong><small>취수구 2 km 이내</small></span></li>
-              <li><span class="swatch swatch-near"></span><span><strong>근접 구간</strong><small>2–5 km</small></span></li>
-              <li><span class="swatch swatch-corridor"></span><span><strong>접근 회랑</strong><small>5–12 km</small></span></li>
-              <li><span class="swatch swatch-far"></span><span><strong>외해 연결</strong><small>12 km 초과</small></span></li>
+              <li><span class="swatch swatch-immediate"></span><span><strong>즉시 감시</strong><small>전체 길이의 0–12%</small></span></li>
+              <li><span class="swatch swatch-near"></span><span><strong>근접 구간</strong><small>전체 길이의 12–30%</small></span></li>
+              <li><span class="swatch swatch-corridor"></span><span><strong>접근 회랑</strong><small>전체 길이의 30–65%</small></span></li>
+              <li><span class="swatch swatch-far"></span><span><strong>외해 연결</strong><small>전체 길이의 65–100%</small></span></li>
             </ul>
-            <p class="legend-note">색은 시간이나 확률이 아니라, 이동 경로 중 취수구와의 거리 우선순위를 뜻합니다.</p>
+            <p class="legend-note">색은 시간이나 확률이 아니라, 현재 해류로 만든 전체 접근영역 안에서 취수구와의 상대 거리를 뜻합니다.</p>
           </div>
 
           <div class="status-card" aria-live="polite">
@@ -54,15 +54,15 @@
               <strong id="path-status">계산 중</strong>
             </div>
             <dl>
-              <div><dt>선택 시점 통과</dt><dd id="connection-value">—</dd></div>
-              <div><dt>더미 ETA</dt><dd id="eta-value">—</dd></div>
+              <div><dt>합성 해류 방향</dt><dd id="connection-value">—</dd></div>
+              <div><dt>합성 해류 유속</dt><dd id="eta-value">—</dd></div>
             </dl>
           </div>
 
           <p id="disclaimer" class="disclaimer"></p>
         </aside>
 
-        <section class="map-panel" aria-label="시간대별 조건부 접근영역 지도">
+        <section class="map-panel" aria-label="해류 방향별 조건부 접근영역 지도">
           <div id="map"></div>
           <div id="map-loading" class="map-loading" role="status">지도와 더미 시뮬레이션을 불러오는 중…</div>
           <div class="map-caption">

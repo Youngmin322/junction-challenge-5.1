@@ -223,8 +223,9 @@ function targetSeekingFlow(target: Position): FlowFieldProvider {
         };
       }
 
-      const speed = 0.24 + 0.025 * Math.sin((elapsedHours / 6) * Math.PI);
-      const crossCurrent = 0.025 * Math.sin(elapsedHours / 3 + (position[1] - 37.1) * 30);
+      const phase = (elapsedHours / 24) * Math.PI;
+      const speed = 0.24 + 0.1 * Math.sin(phase);
+      const crossCurrent = 0.08 * Math.sin(phase + (position[1] - 37.1) * 30);
       const eastUnit = towardTargetX / distance;
       const northUnit = towardTargetY / distance;
       return {
