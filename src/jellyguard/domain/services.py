@@ -597,6 +597,7 @@ class DomainService:
             "issue_time_published": grid_summary.get("issue_time_published"),
             "depth_class": grid_summary.get("depth_class"),
             "crdir_convention": grid_summary.get("crdir_convention"),
+            "convention_check": grid_summary.get("convention_check"),
             "usable_for_transport": False,
             "excluded_reason": reason_code,
         }
@@ -643,7 +644,15 @@ class DomainService:
             (roms_resolution.manifest or {}).get("grid_summary") if roms_field_available else None
         )
         roms_is_area_field = bool(roms_grid and roms_grid.get("is_area_field"))
-        if roms_field_available and roms_is_area_field:
+        roms_convention = (roms_grid or {}).get("convention_check") or {}
+        roms_convention_settled = roms_convention.get("verdict") in {"TOWARD", "FROM"}
+        if roms_field_available and roms_is_area_field and roms_convention_settled:
+            # Coverage and direction are settled. The field is still not the transport
+            # input because the integrator only accepts the approved synthetic grid, so
+            # the remaining blocker is compatibility, not the data itself.
+            roms_reason = ErrorCode.NO_COMPATIBLE_SOURCE.value
+            roms_status = CalculationStatus.DEGRADED
+        elif roms_field_available and roms_is_area_field:
             # Coverage is satisfied; the blocker is now the unverified direction convention.
             roms_reason = ErrorCode.DIRECTION_UNVERIFIED.value
             roms_status = CalculationStatus.DEGRADED

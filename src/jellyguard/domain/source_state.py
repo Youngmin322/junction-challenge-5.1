@@ -16,6 +16,7 @@ import httpx
 from jellyguard.config.registry import SOURCE_REGISTRY, SourceDefinition
 from jellyguard.config.settings import Settings
 from jellyguard.contracts import DataMode, ErrorCode
+from jellyguard.domain.convention import TOWARD, verify_flow_direction_convention
 
 
 class SourceState(StrEnum):
@@ -526,6 +527,7 @@ class PublicDataClient:
         lons = sorted({row["lon"] for row in rows if row.get("lon") is not None})
         cells = sorted({(row["lat"], row["lon"]) for row in rows if row.get("lat") is not None})
         times = sorted({row["valid_at"] for row in rows if row.get("valid_at")})
+        convention = verify_flow_direction_convention(rows)
         return {
             "requested_bbox": bbox,
             "cell_count": len(cells),
@@ -545,7 +547,10 @@ class PublicDataClient:
             "issue_time_published": False,
             "rows_expected": total_count,
             "is_area_field": len(cells) > 1,
-            "crdir_convention": "UNVERIFIED",
+            "crdir_convention": (
+                "TOWARD_CHECK_BASED" if convention["verdict"] == TOWARD else "UNVERIFIED"
+            ),
+            "convention_check": convention,
             "depth_class": "surface_only",
         }
 
