@@ -38,6 +38,9 @@ async def run_demo(url: str, client_key: str, engine: str) -> None:
             "list_zones",
             "intersect_zone",
             "explain_run",
+            "get_ocean_current",
+            "get_jellyfish_reports",
+            "get_marine_environment",
         }
         if names != expected:
             raise AssertionError(f"tool surface changed: {sorted(names)}")
