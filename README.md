@@ -1,4 +1,5 @@
-# Jellywatch
+# MOPS <br> (Marine Organism Path Prediction System for Nuclear Power Plant Intake Clogging Risk)
+
 
 > 경북 동해안의 해파리·해류·해양환경 자료를 한곳에서 점검하고, 한울 공개 데모의 조건부 이동영역과 감시격자 접근 여부를 설명하는 Copilot 기반 의사결정 지원 도구입니다.
 
