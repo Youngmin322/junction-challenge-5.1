@@ -427,6 +427,53 @@ class MeasuredField:
         return _mix(blend(corners[0]), blend(corners[1]), time_weight)
 
 
+# How many arrows the offline dashboard asks for. Enough to show the shape of the flow
+# across the domain, few enough that the arrows stay separable at screen size and the
+# bootstrap payload stays a projection rather than a copy of the field.
+DASHBOARD_VECTOR_LIMIT = 24
+
+
+def downsample_field_vectors(
+    field: MeasuredField, *, limit: int = DASHBOARD_VECTOR_LIMIT
+) -> list[dict[str, float]]:
+    """Thin a measured field into a handful of representative arrows.
+
+    Sampling by striding both axes keeps the arrows spread over the whole covered area.
+    Taking the first N rows instead would crowd every arrow into one corner of the grid and
+    let a viewer read a local eddy as the domain-wide flow.
+
+    The components come from ``MeasuredField``, so the direction convention has already been
+    applied here; there is deliberately no second place that turns a bearing into u/v.
+    """
+    if limit < 1 or not field.times:
+        return []
+    when = field.times[0]
+    side = max(1, math.isqrt(limit))
+    lat_stride = max(1, math.ceil(len(field.lats) / side))
+    lon_stride = max(1, math.ceil(len(field.lons) / side))
+    vectors: list[dict[str, float]] = []
+    for lat in field.lats[::lat_stride]:
+        for lon in field.lons[::lon_stride]:
+            sample = field.samples.get((lat, lon, when))
+            if sample is None:
+                # A hole in the field stays a hole: no nearest-neighbour fill.
+                continue
+            u_ms, v_ms = sample
+            vectors.append(
+                {
+                    "lon": round(lon, 6),
+                    "lat": round(lat, 6),
+                    "u_ms": round(u_ms, 4),
+                    "v_ms": round(v_ms, 4),
+                    "speed_ms": round(math.hypot(u_ms, v_ms), 4),
+                    "bearing_deg_toward": round(math.degrees(math.atan2(u_ms, v_ms)) % 360.0, 2),
+                }
+            )
+            if len(vectors) >= limit:
+                return vectors
+    return vectors
+
+
 def _mix(low: tuple[float, float], high: tuple[float, float], weight: float) -> tuple[float, float]:
     return (
         low[0] + (high[0] - low[0]) * weight,

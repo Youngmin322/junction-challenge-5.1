@@ -20,9 +20,11 @@ from .ports import KeyValueStore
 from .provenance import deterministic_digest
 from .source_state import SourceResolver, SourceState
 from .transport import (
+    DASHBOARD_VECTOR_LIMIT,
     DomainGrid,
     MeasuredField,
     deterministic_run_seed,
+    downsample_field_vectors,
     parse_live_field_ref,
     parse_synthetic_field_ref,
     run_measured_transport,
@@ -319,12 +321,85 @@ class DomainService:
             run_id=run_id,
         )
 
+    # The arrow overlay describes exactly one thing: the measured ROMS area field. That source
+    # is live-only, so it is resolved with the modes it actually supports rather than with the
+    # dashboard's CACHED/SYNTHETIC projection modes, which would silently resolve to nothing.
+    # Offline this lands on LIVE_DISABLED and the dashboard reports the absence.
+    VECTOR_MODES = (DataMode.LIVE, DataMode.CACHED)
+
+    def _current_vector_facts(self) -> dict:
+        """Project the measured field into dashboard arrows, or explain why there are none.
+
+        Three outcomes are kept distinct because they mean different things to a viewer: no
+        field arrived at all, a field arrived but its direction convention is unsettled, and a
+        field arrived with a settled convention. Collapsing the middle case into the first
+        would hide that the data is in hand and only the reading of it is withheld.
+        """
+        resolution = self.source_resolver.resolve("khoa_roms_live", list(self.VECTOR_MODES))
+        summary = (resolution.manifest or {}).get("grid_summary") or {}
+        check = summary.get("convention_check") or None
+        verdict = (check or {}).get("verdict")
+        facts = {
+            "source_id": "khoa_roms_live",
+            "convention": None,
+            "convention_check": check,
+            "crdir_convention": summary.get("crdir_convention"),
+            "valid_at_local": summary.get("valid_from_local"),
+            "field_cell_count": summary.get("cell_count"),
+            "covered_bbox": summary.get("covered_bbox"),
+            "vector_limit": DASHBOARD_VECTOR_LIMIT,
+            "vector_count": 0,
+            "vectors": [],
+        }
+        if not resolution.payload or not summary.get("is_area_field"):
+            return {
+                **facts,
+                "state": "NO_FIELD",
+                "reason_code": resolution.public_reason_code or ErrorCode.NO_COVERAGE.value,
+                "public_message": "실측 면 유동장이 없어 표시할 유속 벡터가 없습니다.",
+            }
+        if verdict not in {"TOWARD", "FROM"}:
+            return {
+                **facts,
+                "state": "WITHHELD_UNVERIFIED_CONVENTION",
+                "reason_code": ErrorCode.DIRECTION_UNVERIFIED.value,
+                "public_message": (
+                    "유향 규약이 검증되지 않아 유속 벡터를 표시하지 않습니다. "
+                    "180도 반대로 그려질 수 있어 방향을 추정하지 않습니다."
+                ),
+            }
+        try:
+            field = MeasuredField.from_rows(
+                resolution.payload, field_id="khoa_roms_live", convention=verdict
+            )
+        except ValueError:
+            return {
+                **facts,
+                "state": "NO_FIELD",
+                "reason_code": ErrorCode.SCHEMA_INVALID.value,
+                "public_message": "실측 유동장 행에서 사용 가능한 유속을 읽지 못했습니다.",
+            }
+        vectors = downsample_field_vectors(field)
+        return {
+            **facts,
+            "state": "AVAILABLE",
+            "convention": verdict,
+            "reason_code": None,
+            "vector_count": len(vectors),
+            "vectors": vectors,
+            "public_message": (
+                "유향 규약은 수온 이류 부호검정으로 판정한 값이며 공급자 문서로 확인된 값이 "
+                "아닙니다."
+            ),
+        }
+
     def dashboard_bootstrap(self, site_id: str = "HANUL_PUBLIC_DEMO") -> DomainResult:
         source_status = self.get_source_status(
             site_id=site_id,
             allowed_modes=["CACHED", "SYNTHETIC"],
             include_internal=False,
         )
+        current_vectors = self._current_vector_facts()
         return self._result(
             tool_name="dashboard_bootstrap",
             status=CalculationStatus(source_status.status),
@@ -337,6 +412,7 @@ class DomainService:
                 "sources": source_status.data["sources"],
                 "source_status": source_status.status,
                 "source_warnings": source_status.warnings,
+                "current_vectors": current_vectors,
                 "horizons_h": [3, 6, 12],
                 "profiles": ["B0_hold", "B2_current_only", "B3"],
                 "dashboard_contract": "offline_public_watch_cells_v1",
@@ -346,6 +422,7 @@ class DomainService:
                 "합성 유동장에 의존한 조건부 시나리오입니다. 실제 예보가 아닙니다.",
                 "합성 사각 도메인입니다. 해안선·육지·수심을 반영하지 않으며 입자가 육상 위를 지날 수 있습니다.",
                 "공개 관측점 기반 프로토타입 감시격자입니다. 실제 취수구·안전계통 경계가 아닙니다.",
+                current_vectors["public_message"],
             ],
             query_id=self.new_id("QUERY"),
         )
