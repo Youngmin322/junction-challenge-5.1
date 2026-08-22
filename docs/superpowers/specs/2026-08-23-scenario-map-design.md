@@ -2,30 +2,65 @@
 
 ## Goal
 
-Add a browser-based, map-first demonstration on top of the existing TypeScript conditional-connectivity engine. It must make a dummy scenario visually understandable: an observed organism cluster is seeded, time-varying currents move an ensemble, coast/shallow-water constraints stop invalid movement, and the map colours every traversed cell by its earliest simulated arrival time.
+Add a browser-based, map-first demonstration on top of the existing TypeScript conditional-connectivity engine. It must make a dummy scenario visually understandable: an observed organism cluster is seeded offshore of the Hanul nuclear power site in Uljin, synthetic currents move an ensemble toward the intake monitoring point, coast/shallow-water constraints stop invalid movement, and the map colours traversed cells by conditional approach priority.
 
 The demonstration is not an operational forecast or a blockage-risk product. Every visible result must state that it is a scenario result under supplied inputs, not a probability of organism abundance, blockage, or facility risk.
 
 ## User-visible behaviour
 
-The demo starts on a map of a fictional intake-adjacent coast with a selected scenario. It offers three named scenarios:
+The demo starts on a map centered between the Hanul site and an offshore observation seed. The Hanul reference location is `[129.38301, 37.0931]` in GeoJSON longitude/latitude order. The coordinate is real map context, while every organism observation, current vector, depth assumption, trajectory, and resulting area remains explicitly synthetic. Existing fictional scenarios remain available, and a new default scenario is added:
+
+1. **Hanul approach** — a converging westward synthetic current carries the offshore cluster toward the intake monitoring point.
+
+The existing three explanatory scenarios remain available:
 
 1. **Eastward spread** — a steady offshore flow carries the cluster east-northeast.
 2. **Tidal turn** — the vector turns after four hours, visibly bending the plume.
 3. **Coastal interception** — part of the ensemble meets a non-navigable land/shallow area and terminates.
 
-For each run, the map renders, in this order: base map, fictional coastline/restricted-water outline, first-arrival cells, current arrows, trajectory lines, seed marker, and an optional dashed monitoring gate. A scenario selector and a 0–48 hour slider let a viewer change the scenario and hide cells first reached after the selected time.
+For each run, the map renders, in this order: base map, optional fictional constraint outline, traversed approach cells, current arrows, trajectory lines, seed marker, monitoring gate, and Hanul intake marker. A scenario selector and a 0–48 hour slider let a viewer change the scenario and hide cells first reached after the selected time.
+
+### Separate time from colour
+
+Time and colour have independent meanings:
+
+- the slider filters cells using `earliestArrivalMinutes`, showing how far the synthetic ensemble has travelled by the selected time;
+- the fill colour uses `approachPriority`, derived from distance to the intake marker, so cells become darker as the simulated path gets closer to Hanul;
+- the map and legend use text as well as colour, so colour is not the only carrier of meaning.
+
+The default approach thresholds are mutually exclusive:
+
+- `immediate-monitoring`: at most 2 km from the intake, deepest crimson;
+- `near-intake`: over 2 km and at most 5 km, red;
+- `approach-corridor`: over 5 km and at most 12 km, coral;
+- `far-offshore`: over 12 km, pale peach.
+
+These are demonstration monitoring bands, not calibrated safety limits. Only cells actually traversed by the particle ensemble are coloured, so proximity alone cannot create a corridor against the synthetic flow.
 
 ### Earliest-arrival bands
 
-The map must not stack a 24-hour translucent region over a 2-hour region. Instead, the engine creates one feature per occupied cell and assigns its `earliestArrivalMinutes` only once. The cell colour has mutually exclusive bands:
+The map must not stack a 24-hour translucent region over a 2-hour region. Instead, the engine creates one feature per occupied cell and assigns its `earliestArrivalMinutes` only once. The arrival time remains available for filtering and inspection through mutually exclusive bands:
 
 - `within-2h`: 0–120 minutes, dark red;
 - `within-4h`: 121–240 minutes, red;
 - `within-24h`: 241–1,440 minutes, light red/orange;
 - `within-48h`: 1,441–2,880 minutes, pale red.
 
-The legend spells out “earliest simulated arrival” and does not call the colour a danger level or probability. The current slider filters by `earliestArrivalMinutes`; it does not rerun or reinterpret the simulation.
+The visible colour legend spells out “conditional approach priority” and does not call the colour a danger level or probability. The current slider filters by `earliestArrivalMinutes`; it does not rerun or reinterpret the simulation.
+
+## Approach-priority post-processing
+
+Add a pure `buildApproachPriorityBands` post-processor. It consumes the existing arrival-cell GeoJSON and returns the same polygons with distance and monitoring-band properties:
+
+```ts
+function buildApproachPriorityBands(args: {
+  arrivalBands: FeatureCollection<Polygon, EarliestArrivalCellProperties>;
+  intakePosition: Position;
+  thresholdsMeters?: { immediate: number; near: number; corridor: number };
+}): FeatureCollection<Polygon, ApproachPriorityCellProperties>;
+```
+
+The cell center is computed from the polygon boundary and measured to `intakePosition` with the existing local geographic distance helper. Every output feature retains `cellId`, `earliestArrivalMinutes`, `arrivalBand`, and `simulatedParticleVisits`, then adds `distanceToIntakeMeters` and one of `immediate-monitoring`, `near-intake`, `approach-corridor`, or `far-offshore` as `approachPriority`. Threshold validation requires positive, strictly increasing metre values.
 
 ## Engine addition
 
@@ -58,7 +93,7 @@ For every successive position in every trajectory, calculate elapsed minutes fro
 
 The map never knows whether currents came from dummy JSON or an actual service. It consumes `SimulationInput`, whose `offshoreFlow`, optional `nearshorePolicy`, and `navigability` are already mockable interfaces.
 
-- `demo/src/scenarios.ts` supplies `FlowFieldProvider` and `NavigabilityProvider` implementations constructed from fixed arrays and fictional coast polygons.
+- `demo/src/scenarios.ts` supplies `FlowFieldProvider` and `NavigabilityProvider` implementations constructed from deterministic synthetic functions and optional fictional coast polygons. The default Hanul provider returns a velocity aimed generally from the requested offshore point toward the intake monitoring point, with a small deterministic cross-current so the corridor remains visibly spread.
 - A future ROMS/nearshore adapter converts raw API rows into the existing `PublicRiskZoneInput` / `calculateRiskZone` entry point, then passes the produced result to the same map renderer.
 - Map features are stable GeoJSON with properties above, so a REST endpoint or a local scenario can both replace a source through `GeoJSONSource.setData`.
 
@@ -68,10 +103,12 @@ No API credential, HTTP fetch, or real-data claim is introduced in this change.
 
 Create a small Vite + TypeScript app under `demo/` and use MapLibre GL JS. The Vite build imports the existing source engine directly. A configurable `mapStyleUrl` defaults to MapLibre's public demonstration style for the hackathon demo; deployment can replace it with an approved provider style without changing calculation code.
 
-The MapLibre source IDs are `coast`, `arrival-bands`, `current-arrows`, `trajectories`, `seed`, and `gate`. The renderer receives only a serializable `ScenarioRenderData` object, which makes replacement with real simulation output a data-mapping task rather than a UI rewrite.
+The MapLibre source IDs are `coast`, `approach-bands`, `current-arrows`, `trajectories`, `seed`, `gate`, and `intake`. The renderer receives only serializable GeoJSON plus scenario metadata, which makes replacement with real simulation output a data-mapping task rather than a UI rewrite.
+
+The desktop layout is map-first with a dark operations sidebar. The sidebar contains the scenario selector, timeline, four-band approach legend, a concise path status, and the mandatory scenario disclaimer. On narrow screens it moves below the map without horizontal scrolling. Controls retain visible labels, keyboard focus, at least 44 px touch height, and colour-independent text descriptions.
 
 ## Validation
 
-Tests must prove that first arrival wins when trajectories revisit a cell, a line segment populates intermediate cells, earliest-arrival bands receive the correct boundaries, and coordinates beyond the configured maximum horizon are omitted. Existing engine tests must remain passing.
+Tests must prove that first arrival wins when trajectories revisit a cell, a line segment populates intermediate cells, earliest-arrival bands receive the correct boundaries, coordinates beyond the configured maximum horizon are omitted, approach thresholds assign exact boundary distances correctly, and the Hanul synthetic current points generally toward the intake. Existing engine tests must remain passing.
 
-`npm run demo:build` must compile the browser app, while `npm test` and `npm run build` continue to validate the engine. A `demo/README.md` documents local startup, the three fictional scenarios, the output semantics, and the exact real-data replacement boundary. The concurrent uncommitted README/example/public-data work is intentionally not modified by this map feature.
+`npm run demo:build` must compile the browser app, while `npm test` and `npm run build` continue to validate the engine. A `demo/README.md` documents local startup, all available scenarios, the output semantics, the real Hanul location context, and the exact real-data replacement boundary.
