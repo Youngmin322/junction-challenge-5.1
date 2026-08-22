@@ -36,6 +36,15 @@ export interface VelocitySample {
   validAt: Date;
 }
 
+export interface GriddedFlowSample {
+  position: Position;
+  depthMeters: number;
+  sourceTime: Date;
+  validAt: Date;
+  uMetersPerSecond: number;
+  vMetersPerSecond: number;
+}
+
 export interface FlowFieldProvider {
   velocityAt(request: VelocityRequest): VelocitySample | null;
 }

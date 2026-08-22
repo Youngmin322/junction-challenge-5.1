@@ -8,3 +8,10 @@ export const CONDITIONAL_CONNECTIVITY_DISCLAIMER =
 
 export * from './risk-zone/types.js';
 export { RiskZoneValidationError, validateSimulationInput } from './risk-zone/validation.js';
+export {
+  createLocalProjection,
+  distanceMeters,
+  pointInPolygon,
+  segmentsIntersect,
+} from './risk-zone/geo.js';
+export { effectiveVelocityAt, GriddedFlowFieldProvider } from './risk-zone/flow-field.js';
