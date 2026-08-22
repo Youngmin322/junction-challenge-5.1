@@ -18,3 +18,5 @@ export { effectiveVelocityAt, GriddedFlowFieldProvider } from './risk-zone/flow-
 export { materializeParticles } from './risk-zone/seed.js';
 export { CoastAndBathymetryProvider } from './risk-zone/navigability.js';
 export type { BathymetrySampler, CoastAndBathymetryOptions } from './risk-zone/navigability.js';
+export { buildConnectivityRegions } from './risk-zone/regions.js';
+export { nearestRankPercentile, simulateConditionalConnectivity } from './risk-zone/simulation.js';
