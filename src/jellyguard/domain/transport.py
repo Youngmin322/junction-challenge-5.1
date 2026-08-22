@@ -45,6 +45,31 @@ class DomainGrid:
     def contains(self, lon: float, lat: float) -> bool:
         return self.lon_min <= lon <= self.lon_max and self.lat_min <= lat <= self.lat_max
 
+    def expanded(self, factor: float) -> DomainGrid:
+        """Grow the window by ``factor`` about its centre, keeping the cell spacing.
+
+        Spacing stays fixed so the expanded run resolves the flow exactly as the first
+        attempt did; only the computation window changes, never the sampling scale.
+        """
+        lon_pad = (self.lon_max - self.lon_min) * factor / 2.0
+        lat_pad = (self.lat_max - self.lat_min) * factor / 2.0
+        return DomainGrid(
+            domain_id=self.domain_id,
+            lon_min=self.lon_min - lon_pad,
+            lon_max=self.lon_max + lon_pad,
+            lat_min=self.lat_min - lat_pad,
+            lat_max=self.lat_max + lat_pad,
+            spacing_deg=self.spacing_deg,
+        )
+
+    def as_bbox(self) -> dict[str, float]:
+        return {
+            "lon_min": self.lon_min,
+            "lon_max": self.lon_max,
+            "lat_min": self.lat_min,
+            "lat_max": self.lat_max,
+        }
+
     def cell_id(self, lon: float, lat: float) -> str | None:
         if not self.contains(lon, lat):
             return None
@@ -397,6 +422,30 @@ class MeasuredField:
             start_epoch=times[0],
         )
 
+    @property
+    def covered_bbox(self) -> dict[str, float]:
+        """The footprint the provider actually delivered rows for.
+
+        This is the hard limit for window expansion: outside it there is nothing to
+        interpolate, so a wider grid would only relabel ``field_missing`` particles as
+        in-domain without adding a single measured value.
+        """
+        return {
+            "lon_min": self.lons[0],
+            "lon_max": self.lons[-1],
+            "lat_min": self.lats[0],
+            "lat_max": self.lats[-1],
+        }
+
+    def covers_grid(self, grid: DomainGrid) -> bool:
+        bbox = self.covered_bbox
+        return (
+            grid.lon_min >= bbox["lon_min"]
+            and grid.lon_max <= bbox["lon_max"]
+            and grid.lat_min >= bbox["lat_min"]
+            and grid.lat_max <= bbox["lat_max"]
+        )
+
     def sample(self, lon: float, lat: float, elapsed_seconds: float) -> tuple[float, float] | None:
         when = self.start_epoch + elapsed_seconds
         time_bracket = _bracket(self.times, when)
@@ -463,6 +512,13 @@ LIVE_FIELD_PREFIX = "live:"
 # envelope as if it were the whole cloud.
 DOMAIN_EXIT_TOLERANCE = 0.01
 
+# When the tolerance is exceeded the window is widened by this share about its centre and
+# the run is repeated, at most this many times. Neither number is a scientific threshold:
+# they are versioned engineering defaults chosen so that a truncated computation window is
+# never hidden, and the values actually used are written into every run result.
+DOMAIN_EXPANSION_FACTOR = 0.25
+DOMAIN_EXPANSION_MAX_ATTEMPTS = 4
+
 
 def parse_live_field_ref(field_ref: str, domain_id: str) -> str:
     """Return the source id carried by a four-part live field reference."""
@@ -481,20 +537,14 @@ def parse_live_field_ref(field_ref: str, domain_id: str) -> str:
     return source_id
 
 
-def run_measured_transport(
+def _measured_attempt(
     *,
     seeds: list[dict[str, Any]],
     grid: DomainGrid,
     field: MeasuredField,
     horizons_h: list[int],
-    run_seed: int,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Advect seeds through a measured field, with no stochastic spread.
-
-    A single deterministic forecast carries no spread information of its own, so members
-    differ only by their release position. Calling the result an ensemble would imply an
-    uncertainty estimate that this field cannot support.
-    """
+) -> tuple[dict[str, Any], dict[str, list[dict[str, Any]]], list[dict[str, Any]]]:
+    """Run one integration over one candidate window and report how much of it leaked out."""
     members = _seed_members(seeds)
 
     def velocity_at(_member: dict[str, Any], lon: float, lat: float, seconds: float):
@@ -512,13 +562,6 @@ def run_measured_transport(
         grid=grid,
         horizons_h=horizons_h,
     )
-    reproducibility = {
-        "run_seed": run_seed,
-        "rng_algorithm": "none",
-        "quantization": {"coordinate_deg": 1e-7, "physical": 1e-6},
-        "float_policy": "float64_rk4_fixed_no_parallel_reduce_sorted_index",
-        "reproducibility_class": "quantized_cross_env",
-    }
     exit_fraction = {
         hour: (
             summary["terminated_by"]["out_of_domain"] / summary["released"]
@@ -527,14 +570,101 @@ def run_measured_transport(
         )
         for hour, summary in horizon_summary.items()
     }
-    insufficient = sorted(
-        int(hour) for hour, share in exit_fraction.items() if share > DOMAIN_EXIT_TOLERANCE
-    )
+    outcome = {
+        "envelopes": envelopes,
+        "horizon_summary": horizon_summary,
+        "released": released,
+        "exit_fraction": exit_fraction,
+        "insufficient": sorted(
+            int(hour) for hour, share in exit_fraction.items() if share > DOMAIN_EXIT_TOLERANCE
+        ),
+    }
+    return outcome, snapshots, members
+
+
+def run_measured_transport(
+    *,
+    seeds: list[dict[str, Any]],
+    grid: DomainGrid,
+    field: MeasuredField,
+    horizons_h: list[int],
+    run_seed: int,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Advect seeds through a measured field, with no stochastic spread.
+
+    A single deterministic forecast carries no spread information of its own, so members
+    differ only by their release position. Calling the result an ensemble would imply an
+    uncertainty estimate that this field cannot support.
+
+    The bbox here is a computation window, not a risk area: when too much of the cloud
+    leaves it before the requested horizon the window is widened and the run repeated,
+    because a window that is too small silently reports a thinned envelope as if it were the
+    whole cloud. Expansion never re-fetches — it only re-uses the field already loaded, so
+    the provider footprint bounds how far it can go.
+    """
+    attempt_grid = grid
+    attempt_exit_fractions: list[dict[str, Any]] = []
+    stopped_reason: str | None = None
+    attempts = 0
+    while True:
+        attempts += 1
+        outcome, snapshots, members = _measured_attempt(
+            seeds=seeds,
+            grid=attempt_grid,
+            field=field,
+            horizons_h=horizons_h,
+        )
+        attempt_exit_fractions.append(
+            {
+                "attempt": attempts,
+                "bbox": attempt_grid.as_bbox(),
+                "exit_fraction": {
+                    hour: round(share, 4) for hour, share in outcome["exit_fraction"].items()
+                },
+                "insufficient_horizons": outcome["insufficient"],
+            }
+        )
+        if not outcome["insufficient"]:
+            break
+        candidate = attempt_grid.expanded(DOMAIN_EXPANSION_FACTOR)
+        if not field.covers_grid(candidate):
+            # Widening past the measured footprint would only turn field_missing members
+            # into in-domain ones without adding measured water. Stop and say so.
+            stopped_reason = "field_footprint_limit"
+            break
+        if attempts > DOMAIN_EXPANSION_MAX_ATTEMPTS:
+            stopped_reason = "expansion_attempt_cap"
+            break
+        attempt_grid = candidate
+
+    reproducibility = {
+        "run_seed": run_seed,
+        "rng_algorithm": "none",
+        "quantization": {"coordinate_deg": 1e-7, "physical": 1e-6},
+        "float_policy": "float64_rk4_fixed_no_parallel_reduce_sorted_index",
+        "reproducibility_class": "quantized_cross_env",
+    }
+    domain_expansion = {
+        "attempts": attempts,
+        "expansions_applied": attempts - 1,
+        "max_attempts": DOMAIN_EXPANSION_MAX_ATTEMPTS,
+        "expansion_factor": DOMAIN_EXPANSION_FACTOR,
+        "tolerance": DOMAIN_EXIT_TOLERANCE,
+        "initial_bbox": grid.as_bbox(),
+        "final_bbox": attempt_grid.as_bbox(),
+        "field_covered_bbox": field.covered_bbox,
+        "attempt_exit_fractions": attempt_exit_fractions,
+        "stopped_reason": stopped_reason,
+        "resolved": not outcome["insufficient"],
+    }
     public = {
         "profile_id": f"measured:{field.field_id}",
-        "domain_exit_fraction": {hour: round(share, 4) for hour, share in exit_fraction.items()},
+        "domain_exit_fraction": {
+            hour: round(share, 4) for hour, share in outcome["exit_fraction"].items()
+        },
         "domain_exit_tolerance": DOMAIN_EXIT_TOLERANCE,
-        "domain_insufficient_horizons": insufficient,
+        "domain_insufficient_horizons": outcome["insufficient"],
+        "domain_expansion": domain_expansion,
         "field_constants": None,
         "field_source": {
             "field_id": field.field_id,
@@ -544,9 +674,9 @@ def run_measured_transport(
             "timestep_count": len(field.times),
             "interpolation": "bilinear_space_linear_time_no_gap_fill",
         },
-        "released": released,
-        "horizon_summary": horizon_summary,
-        "envelopes": envelopes,
+        "released": outcome["released"],
+        "horizon_summary": outcome["horizon_summary"],
+        "envelopes": outcome["envelopes"],
         "physical_realism": "surface_only_measured_field",
         "coastline_basis": "none",
         "spread_parameterization": None,
@@ -559,6 +689,7 @@ def run_measured_transport(
         "snapshots": snapshots,
         "members": members,
         "run_seed": run_seed,
+        "domain_expansion": domain_expansion,
         "reproducibility": reproducibility,
     }
     return public, artifact

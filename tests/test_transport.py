@@ -427,3 +427,246 @@ def test_measured_transport_reports_domain_exit_instead_of_a_clipped_envelope():
     assert public["domain_exit_fraction"]["2"] > public["domain_exit_tolerance"]
     assert public["field_source"]["crdir_convention"] == "TOWARD"
     assert public["field_constants"] is None
+
+
+def _area_measured_rows(lats, lons, *, hours=4, bearing_degrees=0.0, speed=0.2):
+    """A uniform field over an explicit lat/lon footprint, so tests can control the limit."""
+    rows = []
+    for lat in lats:
+        for lon in lons:
+            for hour in range(hours):
+                rows.append(
+                    {
+                        "lat": lat,
+                        "lon": lon,
+                        "valid_at": f"2026-08-22 {hour:02d}:00:00",
+                        "current_direction": bearing_degrees,
+                        "current_speed": speed,
+                    }
+                )
+    return rows
+
+
+def _linspace(start, step, count):
+    return [round(start + step * index, 4) for index in range(count)]
+
+
+def test_measured_transport_expands_the_window_until_the_cloud_fits():
+    from jellyguard.domain.transport import DomainGrid, MeasuredField, run_measured_transport
+
+    field = MeasuredField.from_rows(
+        _area_measured_rows(_linspace(36.98, 0.02, 12), _linspace(129.30, 0.02, 16)),
+        field_id="t",
+        convention="TOWARD",
+    )
+    grid = DomainGrid(
+        domain_id="TEST_DOMAIN",
+        lon_min=129.40,
+        lon_max=129.48,
+        lat_min=37.06,
+        lat_max=37.10,
+        spacing_deg=0.01,
+    )
+    seeds = [{"seed_id": "S1", "geometry": {"type": "Point", "coordinates": [129.44, 37.09]}}]
+
+    public, artifact = run_measured_transport(
+        seeds=seeds, grid=grid, field=field, horizons_h=[1], run_seed=1
+    )
+    expansion = public["domain_expansion"]
+
+    assert public["domain_insufficient_horizons"] == []
+    assert expansion["resolved"] is True
+    assert expansion["stopped_reason"] is None
+    assert expansion["expansions_applied"] >= 1
+    assert expansion["expansion_factor"] == 0.25
+    assert expansion["tolerance"] == public["domain_exit_tolerance"]
+    # Every attempt is on the record, so a reader can see the window growing.
+    assert len(expansion["attempt_exit_fractions"]) == expansion["attempts"]
+    assert expansion["attempt_exit_fractions"][0]["insufficient_horizons"] == [1]
+    assert expansion["attempt_exit_fractions"][-1]["insufficient_horizons"] == []
+    # The reported envelope belongs to the window that was actually used.
+    assert expansion["final_bbox"]["lat_max"] > expansion["initial_bbox"]["lat_max"]
+    assert expansion["final_bbox"] != expansion["initial_bbox"]
+    assert artifact["domain_expansion"] == expansion
+
+
+def test_measured_transport_stops_expanding_at_the_field_footprint():
+    from jellyguard.domain.transport import DomainGrid, MeasuredField, run_measured_transport
+
+    # The provider footprint is only a little wider than the grid, so one expansion fits
+    # and the next would step outside the measured water.
+    field = MeasuredField.from_rows(
+        _area_measured_rows(_linspace(37.04, 0.02, 5), _linspace(129.38, 0.02, 7), speed=0.6),
+        field_id="t",
+        convention="TOWARD",
+    )
+    grid = DomainGrid(
+        domain_id="TEST_DOMAIN",
+        lon_min=129.40,
+        lon_max=129.48,
+        lat_min=37.05,
+        lat_max=37.11,
+        spacing_deg=0.01,
+    )
+    seeds = [{"seed_id": "S1", "geometry": {"type": "Point", "coordinates": [129.44, 37.10]}}]
+
+    public, _ = run_measured_transport(
+        seeds=seeds, grid=grid, field=field, horizons_h=[1], run_seed=1
+    )
+    expansion = public["domain_expansion"]
+
+    assert expansion["stopped_reason"] == "field_footprint_limit"
+    assert expansion["resolved"] is False
+    assert public["domain_insufficient_horizons"]
+    # It expanded as far as the measured footprint allowed and no further.
+    assert expansion["expansions_applied"] >= 1
+    assert expansion["final_bbox"]["lat_min"] >= expansion["field_covered_bbox"]["lat_min"]
+    assert expansion["final_bbox"]["lat_max"] <= expansion["field_covered_bbox"]["lat_max"]
+    assert expansion["final_bbox"]["lon_min"] >= expansion["field_covered_bbox"]["lon_min"]
+    assert expansion["final_bbox"]["lon_max"] <= expansion["field_covered_bbox"]["lon_max"]
+
+
+def test_measured_transport_stops_at_the_attempt_cap():
+    from jellyguard.domain.transport import (
+        DOMAIN_EXPANSION_MAX_ATTEMPTS,
+        DomainGrid,
+        MeasuredField,
+        run_measured_transport,
+    )
+
+    # A footprint far larger than any expansion could exhaust, with a flow fast enough
+    # that no bounded number of 25% steps can contain it.
+    field = MeasuredField.from_rows(
+        _area_measured_rows(_linspace(36.0, 0.05, 41), _linspace(129.0, 0.05, 21), speed=3.0),
+        field_id="t",
+        convention="TOWARD",
+    )
+    grid = DomainGrid(
+        domain_id="TEST_DOMAIN",
+        lon_min=129.40,
+        lon_max=129.48,
+        lat_min=37.05,
+        lat_max=37.11,
+        spacing_deg=0.01,
+    )
+    seeds = [{"seed_id": "S1", "geometry": {"type": "Point", "coordinates": [129.44, 37.08]}}]
+
+    public, _ = run_measured_transport(
+        seeds=seeds, grid=grid, field=field, horizons_h=[2], run_seed=1
+    )
+    expansion = public["domain_expansion"]
+
+    assert expansion["stopped_reason"] == "expansion_attempt_cap"
+    assert expansion["expansions_applied"] == DOMAIN_EXPANSION_MAX_ATTEMPTS
+    assert public["domain_insufficient_horizons"] == [2]
+
+
+def _roms_shaped_field_rows(*, speed, bearing_degrees=0.0):
+    """Rows over the real ROMS request bbox, so the footprint limit is the realistic one."""
+    return _area_measured_rows(
+        _linspace(36.95, 0.01, 24),
+        _linspace(129.32, 0.01, 21),
+        hours=5,
+        bearing_degrees=bearing_degrees,
+        speed=speed,
+    )
+
+
+class _StubMeasuredResolver:
+    """Stands in for the live resolver so no test touches the network."""
+
+    def __init__(self, payload):
+        self.payload = payload
+
+    def resolve(self, source_id, modes):
+        from jellyguard.domain.source_state import SourceResolution, SourceState
+
+        return SourceResolution(
+            source_id=source_id,
+            source_class="current_field",
+            optional=False,
+            state=SourceState.LIVE_OK,
+            payload=self.payload,
+            manifest={
+                "grid_summary": {
+                    "is_area_field": True,
+                    "convention_check": {"verdict": "TOWARD"},
+                }
+            },
+        )
+
+
+LIVE_FIELD_REF = (
+    "live:SYNTH_DOMAIN_HANUL_v1.khoa_roms_live:2026-08-23T00:00:00Z:2026-08-23T00:00:00Z"
+)
+
+
+def _measured_service(rows):
+    domain_service = service()
+    domain_service.source_resolver = _StubMeasuredResolver(rows)
+    return domain_service
+
+
+def test_run_transport_reports_the_expansion_that_rescued_the_run():
+    domain_service = _measured_service(_roms_shaped_field_rows(speed=0.5))
+
+    run = domain_service.run_transport(
+        seed_ids=["SEED-HANUL-DEMO-001"],
+        field_ref=LIVE_FIELD_REF,
+        horizons_h=[3],
+        allowed_modes=["LIVE"],
+    )
+
+    assert run.status == "READY"
+    expansion = run.data["computed_metric"]["domain_expansion"]
+    assert expansion["expansions_applied"] >= 1
+    assert expansion["resolved"] is True
+    assert any("확장" in warning for warning in run.warnings)
+
+
+def test_run_transport_blocks_when_expansion_cannot_contain_the_cloud():
+    domain_service = _measured_service(_roms_shaped_field_rows(speed=0.8))
+
+    run = domain_service.run_transport(
+        seed_ids=["SEED-HANUL-DEMO-001"],
+        field_ref=LIVE_FIELD_REF,
+        horizons_h=[3],
+        allowed_modes=["LIVE"],
+    )
+
+    # A truncated envelope must never be handed out as a finished result.
+    assert run.status == "BLOCKED"
+    assert run.error.code == "DOMAIN_INSUFFICIENT"
+    assert run.error.unavailable_reason == "field_footprint_limit"
+    assert run.data["computed_metric"] is None
+    # The caller still sees how far the expansion got before it gave up.
+    assert run.data["domain_expansion"]["expansions_applied"] >= 1
+    assert run.data["domain_expansion"]["attempt_exit_fractions"]
+    assert run.status_reasons == ["DOMAIN_INSUFFICIENT"]
+
+    # A BLOCKED run stays unusable downstream.
+    intersection = domain_service.intersect_zone(
+        run_id=run.run_id, zone_ids=["DEMO_GATE_NAGOK_v1"], horizons_h=[3]
+    )
+    assert intersection.status == "BLOCKED"
+
+
+def test_synthetic_runs_are_untouched_by_window_expansion():
+    domain_service = service()
+
+    run = domain_service.run_transport(
+        seed_ids=["SEED-HANUL-DEMO-001"],
+        field_ref=(
+            "synthetic:SYNTH_DOMAIN_HANUL_v1.B2_current_only"
+            ":2026-08-23T00:00:00Z:2026-08-23T00:00:00Z"
+        ),
+        horizons_h=[3, 6, 12],
+        allowed_modes=["SYNTHETIC"],
+    )
+
+    assert run.status == "READY"
+    computed = run.data["computed_metric"]
+    # The synthetic path has no computation-window bookkeeping at all.
+    assert "domain_expansion" not in computed
+    assert "domain_exit_fraction" not in computed
+    assert not any("확장" in warning for warning in run.warnings)

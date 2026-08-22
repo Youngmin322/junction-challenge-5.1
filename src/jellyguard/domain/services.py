@@ -1106,13 +1106,46 @@ class DomainService:
             )
         domain_warnings: list[str] = []
         if measured_field is not None:
+            expansion = computed.get("domain_expansion") or {}
             insufficient = computed.get("domain_insufficient_horizons") or []
             if insufficient:
+                # 확장을 다 해보고도 계산창이 부족하면 잘린 envelope를 READY로 내보내지 않는다.
+                # 얇아진 member 구름을 그대로 보고하면 "이만큼만 퍼진다"는 거짓 결론이 된다.
+                stop_reason = expansion.get("stopped_reason") or "domain_insufficient"
+                error = ServiceError(
+                    code=ErrorCode.DOMAIN_INSUFFICIENT,
+                    message=(
+                        f"계산창을 {expansion.get('expansions_applied', 0)}회 "
+                        f"({expansion.get('expansion_factor', 0):.0%}씩) 확장했지만 "
+                        f"경계를 벗어난 member 비율이 여전히 "
+                        f"{computed['domain_exit_tolerance']:.0%}를 넘습니다 "
+                        f"(h={insufficient}). 잘린 envelope를 결과로 내보내지 않습니다."
+                    ),
+                    unavailable_reason=stop_reason,
+                    required=["실측 유동장 footprint를 넓힌 재조회"],
+                )
+                result = self._result(
+                    tool_name="run_transport",
+                    status=CalculationStatus.BLOCKED,
+                    claim_type=ClaimType.CONDITIONAL_SCENARIO,
+                    data={
+                        **request_echo,
+                        "computed_metric": None,
+                        "domain_expansion": expansion,
+                    },
+                    status_reasons=[error.code.value],
+                    modes=[],
+                    error=error,
+                    run_id=run_id,
+                )
+                self.run_store.put(run_id, result.model_dump(mode="json"))
+                return result
+            if expansion.get("expansions_applied"):
                 domain_warnings.append(
-                    f"{ErrorCode.DOMAIN_INSUFFICIENT.value}: 계산창 밖으로 나간 member 비율이 "
-                    f"{computed['domain_exit_tolerance']:.0%}를 넘는 horizon이 있습니다 "
-                    f"(h={insufficient}). 실측 유동장에 비해 도메인이 좁아 envelope가 "
-                    "잘려 있으므로 확장 후 재계산이 필요합니다."
+                    f"실측 유동장에 비해 계산창이 좁아 "
+                    f"{expansion['expansion_factor']:.0%}씩 "
+                    f"{expansion['expansions_applied']}회 확장한 뒤 재계산했습니다. "
+                    "envelope의 격자 원점이 요청 도메인과 다릅니다."
                 )
         artifact["zones"] = deepcopy(self.demo_zones)
         artifact_id = f"ART-{run_seed:016x}"
