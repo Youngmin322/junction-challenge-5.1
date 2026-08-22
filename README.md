@@ -5,7 +5,7 @@
 
 **현재 심사·통합 대상 브랜치: `integration/all-features`**
 
-Jellywatch는 공공데이터를 무리하게 하나의 "위험 확률"로 합치지 않습니다. 자료의 출처와 시각, 실제·재생·합성 여부, 계산에 쓰지 못한 이유를 함께 보여주고, 근거가 부족한 요청은 `BLOCKED`로 멈춥니다.
+MOPS는 공공데이터를 무리하게 하나의 "위험 확률"로 합치지 않습니다. 자료의 출처와 시각, 실제·재생·합성 여부, 계산에 쓰지 못한 이유를 함께 보여주고, 근거가 부족한 요청은 `BLOCKED`로 멈춥니다.
 
 > 조건부 이동영역은 주어진 관측·해류·수심·게이트 조건에서의 입자 연결 계산입니다. 해파리 생물량, 취수구 막힘 확률 또는 시설 위험도를 뜻하지 않습니다.
 
@@ -208,5 +208,3 @@ npm run verify
 | `packages/risk-zone/` | MapLibre 지도 데모와 TypeScript 계산 패키지 |
 | `engines/risk-zone/` | JellyGuard 연동 TypeScript 엔진 및 ESM bridge |
 | `docs/collectors/` | 수집기 설계와 데이터 통합 근거 |
-
-세부 REST·MCP 계약과 수송 엔진 설명은 [`backend/README.md`](backend/README.md), 독립 TypeScript 계산 API는 [`packages/risk-zone/README.md`](packages/risk-zone/README.md)를 참고하세요.
