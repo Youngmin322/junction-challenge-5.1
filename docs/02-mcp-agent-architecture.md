@@ -53,13 +53,14 @@
 | 선택 자료 | 적조·정선관측은 context adapter로 등록하되 기본 UI에는 노출하지 않는다. |
 | 원격 수집 브랜치 | merge·cherry-pick하지 않고, 검증된 endpoint·필드·station 사실만 새 adapter에 선택 이식한다. |
 | 재현성 | Python 3.11+, `uv`와 `uv.lock`, 고정 시계·난수, 오프라인 fixture/golden을 사용한다. |
+| MCP 전송 | Copilot Studio 연결은 HTTPS `POST /mcp`의 Streamable HTTP를 사용한다. stdio·SSE는 Copilot Studio 연결 경로로 사용하지 않는다. |
 
 ## 3. 최종 아키텍처
 
 ```text
 Copilot Orchestrator / 범용 MCP Client       Web UI
                  │                             │
-            MCP tools                    REST /v1/*
+     HTTPS Streamable HTTP /mcp          REST /v1/*
                  │                             │
         mcp/tools/*.py                api/routers/*.py
                  └──────────┬──────────────────┘
@@ -88,6 +89,8 @@ Copilot Orchestrator / 범용 MCP Client       Web UI
 6. 선택된 필수 입력 component만 최상위 실행 상태를 결정한다.
 7. `CanonicalResult`를 생성하고 public projection을 거쳐 REST/MCP로 반환한다.
 8. 입력·버전·오류·체크섬은 append-only run/audit 기록으로 보존한다.
+
+Copilot Studio는 클라우드에서 실행되므로 로컬 `localhost`를 직접 호출할 수 없다. 해커톤 데모에서는 Microsoft Dev Tunnel이 공개 HTTPS `/mcp` 요청을 로컬 port 8000으로 전달한다. 대시보드의 REST API와 저장소는 로컬 전용으로 유지한다. 연결 절차는 [04-copilot-studio-local-mcp-connection.md](04-copilot-studio-local-mcp-connection.md)를 따른다.
 
 ## 4. 패키지 구조
 
