@@ -1,0 +1,32 @@
+{
+  "source_id": "nifs_jelly_catalog",
+  "request_fingerprint": "36a0ff0daf5f6cb8b818e6f50c7c3ccbbdc13f7d21dcac9b6bb75b146a765c81",
+  "http_status": 200,
+  "provider_result_code": "00",
+  "issued_at": "2026-08-20T04:22:30Z",
+  "fetched_at": "2026-08-23T02:00:00Z",
+  "content_checksum": "31151b6acfa42f9e6cf4035714fb54dd88e4d3d4f14da443f3b1b81155e6ce30",
+  "adapter_version": "public-data-v1",
+  "license": "public-data",
+  "rows_received": 2,
+  "pages_received": 1,
+  "partial": false,
+  "failed_pages": [],
+  "redacted_endpoint": "https://www.nifs.go.kr/api/OpenAPI_json",
+  "payload": [
+    {
+      "catalog_id": "20260820132230110SLI",
+      "title": "해파리 모니터링 주간보고",
+      "registered_at": "2026-08-20",
+      "source_id": "nifs_jelly_catalog",
+      "claim_type": "context/report_catalog"
+    },
+    {
+      "catalog_id": "20260813130000000FIX",
+      "title": "해파리 모니터링 주간보고",
+      "registered_at": "2026-08-13",
+      "source_id": "nifs_jelly_catalog",
+      "claim_type": "context/report_catalog"
+    }
+  ]
+}

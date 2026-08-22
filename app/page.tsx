@@ -5,32 +5,35 @@ import { FormEvent, useEffect, useState } from 'react';
 type Language = 'ko' | 'en';
 type Message = { role: 'assistant' | 'user'; content: string };
 type CopilotState = 'checking' | 'ready' | 'auth' | 'offline';
-type HealthResponse = { copilot?: string };
+type BackendState = 'checking' | 'ready' | 'offline';
+type HealthResponse = { copilot?: string; jellyguard?: string };
 type CopilotResponse = { answer?: string; code?: string; error?: string };
+
+const copilotApiBase = process.env.NEXT_PUBLIC_COPILOT_API_BASE ?? 'http://localhost:3001';
 
 const datasetDefinitions = [
   {
     id: 'jellyfish',
-    name: { ko: '해파리 출현', en: 'Jellyfish sightings' },
+    name: { ko: '해파리 보고', en: 'Jellyfish reports' },
     source: { ko: '국립수산과학원', en: 'NIFS' },
     tone: 'coral',
   },
   {
-    id: 'water_temperature',
-    name: { ko: '수온', en: 'Water temperature' },
-    source: { ko: 'KODC', en: 'KODC' },
+    id: 'ocean_current',
+    name: { ko: '해류 관측', en: 'Ocean currents' },
+    source: { ko: 'KHOA 부이·HF-RADAR', en: 'KHOA buoys · HF radar' },
     tone: 'blue',
   },
   {
-    id: 'dissolved_oxygen',
-    name: { ko: '용존산소', en: 'Dissolved oxygen' },
-    source: { ko: 'KODC', en: 'KODC' },
+    id: 'marine_environment',
+    name: { ko: '적조·해양환경', en: 'Marine environment' },
+    source: { ko: 'NIFS 적조·정선해양', en: 'NIFS red tide · ocean survey' },
     tone: 'mint',
   },
   {
-    id: 'plankton',
-    name: { ko: '플랑크톤', en: 'Plankton' },
-    source: { ko: '해양생태계종합조사', en: 'National Marine Ecosystem Survey' },
+    id: 'risk_zone',
+    name: { ko: '취수구 접근영역', en: 'Intake approach zone' },
+    source: { ko: 'JellyGuard 조건부 계산', en: 'JellyGuard conditional model' },
     tone: 'violet',
   },
 ] as const;
@@ -44,7 +47,7 @@ const copy = {
     localDescription: '데이터와 인증 정보는 로컬 서버 안에서만 처리됩니다.',
     region: 'GYEONGBUK EAST SEA',
     title: '해파리 데이터 관리 센터',
-    subtitle: '출현·수온·용존산소·플랑크톤 데이터를 Copilot과 점검하세요.',
+    subtitle: '해파리·해류·해양환경·취수구 접근영역을 하나의 흐름에서 점검하세요.',
     switchLanguage: '영어로 전환',
     switchLabel: 'English',
     schemaReady: '스키마 준비',
@@ -54,7 +57,7 @@ const copy = {
     welcome: '안녕하세요. 데이터 연결 상태와 품질 검사 항목을 확인해 드릴게요.',
     loading: '데이터 도구를 확인하고 있어요…',
     inputLabel: 'Copilot에게 질문',
-    inputPlaceholder: '예: 플랑크톤 데이터 상태를 확인해줘',
+    inputPlaceholder: '예: 취수구 접근영역 데이터 상태를 확인해줘',
     send: '보내기',
     statusEyebrow: 'LOCAL STATUS',
     statusTitle: '관리 상태',
@@ -62,6 +65,7 @@ const copy = {
     fourItems: '4개',
     writePermission: '쓰기 권한',
     blocked: '차단됨',
+    backend: 'JellyGuard',
     authHelp: 'Copilot CLI 로그인 또는 COPILOT_GITHUB_TOKEN 설정이 필요합니다.',
     offlineHelp: '로컬 백엔드가 실행되지 않았습니다. 프로젝트에서 npm run dev를 실행하세요.',
     emptyError: '응답을 받지 못했습니다.',
@@ -70,8 +74,8 @@ const copy = {
     connectionHelp: '서버와 Copilot 인증 상태를 확인해 주세요.',
     quickPrompts: [
       '관리 중인 데이터 목록을 보여줘',
-      '플랑크톤 데이터 품질을 확인해줘',
-      '해파리 데이터의 다음 작업을 알려줘',
+      '해류 데이터 품질을 확인해줘',
+      '취수구 접근영역의 현재 상태를 알려줘',
     ],
     status: {
       checking: '확인 중',
@@ -88,7 +92,7 @@ const copy = {
     localDescription: 'Data and credentials are processed only by your local server.',
     region: 'GYEONGBUK EAST SEA',
     title: 'Jellyfish Data Center',
-    subtitle: 'Review sightings, water temperature, dissolved oxygen, and plankton data with Copilot.',
+    subtitle: 'Review jellyfish, currents, marine conditions, and intake approach zones in one workflow.',
     switchLanguage: '한국어로 전환',
     switchLabel: '한국어',
     schemaReady: 'Schema ready',
@@ -98,7 +102,7 @@ const copy = {
     welcome: 'Hello! I can review your data connections and quality checks.',
     loading: 'Checking the data tools…',
     inputLabel: 'Ask Copilot',
-    inputPlaceholder: 'Example: Check the plankton dataset status',
+    inputPlaceholder: 'Example: Check the intake approach zone status',
     send: 'Send',
     statusEyebrow: 'LOCAL STATUS',
     statusTitle: 'Management status',
@@ -106,6 +110,7 @@ const copy = {
     fourItems: '4',
     writePermission: 'Write access',
     blocked: 'Blocked',
+    backend: 'JellyGuard',
     authHelp: 'Sign in to Copilot CLI or configure COPILOT_GITHUB_TOKEN.',
     offlineHelp: 'The local backend is not running. Run npm run dev in the project.',
     emptyError: 'No response was received.',
@@ -114,8 +119,8 @@ const copy = {
     connectionHelp: 'Check the server and Copilot authentication status.',
     quickPrompts: [
       'Show me the datasets being managed',
-      'Check the quality of the plankton dataset',
-      'Tell me the next task for the jellyfish dataset',
+      'Check the quality of the ocean current dataset',
+      'Show the current intake approach zone status',
     ],
     status: {
       checking: 'Checking',
@@ -141,6 +146,7 @@ export default function Home() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [copilotState, setCopilotState] = useState<CopilotState>('checking');
+  const [backendState, setBackendState] = useState<BackendState>('checking');
   const t = copy[language];
 
   useEffect(() => {
@@ -153,12 +159,16 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    fetch('http://localhost:3001/api/health')
+    fetch(`${copilotApiBase}/api/health`)
       .then(async (response) => {
         const body = (await response.json()) as HealthResponse;
         setCopilotState(body.copilot === 'ready' ? 'ready' : 'auth');
+        setBackendState(body.jellyguard === 'ready' ? 'ready' : 'offline');
       })
-      .catch(() => setCopilotState('offline'));
+      .catch(() => {
+        setCopilotState('offline');
+        setBackendState('offline');
+      });
   }, []);
 
   function toggleLanguage() {
@@ -182,7 +192,7 @@ export default function Home() {
     setLoading(true);
 
     try {
-      const response = await fetch('http://localhost:3001/api/copilot', {
+      const response = await fetch(`${copilotApiBase}/api/copilot`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: question, language }),
@@ -335,7 +345,8 @@ export default function Home() {
               <div className="mt-8 space-y-5 text-sm">
                 <div className="flex justify-between border-b border-[#cfdee1] pb-4"><span className="text-[#60777c]">{t.registeredData}</span><strong>{t.fourItems}</strong></div>
                 <div className="flex justify-between border-b border-[#cfdee1] pb-4"><span className="text-[#60777c]">{t.writePermission}</span><strong>{t.blocked}</strong></div>
-                <div className="flex justify-between"><span className="text-[#60777c]">Copilot</span><strong className={statusClassNames[copilotState]}>{t.status[copilotState]}</strong></div>
+                <div className="flex justify-between border-b border-[#cfdee1] pb-4"><span className="text-[#60777c]">Copilot</span><strong className={statusClassNames[copilotState]}>{t.status[copilotState]}</strong></div>
+                <div className="flex justify-between"><span className="text-[#60777c]">{t.backend}</span><strong className={statusClassNames[backendState]}>{t.status[backendState]}</strong></div>
               </div>
 
               {copilotState === 'auth' && (

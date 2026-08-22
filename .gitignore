@@ -38,3 +38,14 @@ next-env.d.ts
 /.wrangler/
 /outputs/
 /work/
+
+# integrated services
+/__pycache__/
+__pycache__/
+*.py[cod]
+/backend/.venv/
+/backend/runs/*.jsonl
+/backend/runs/cache/
+/packages/risk-zone/node_modules/
+/packages/risk-zone/dist/
+/packages/risk-zone/demo/dist/

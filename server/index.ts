@@ -5,51 +5,72 @@ import express from 'express';
 import { CopilotClient, defineTool } from '@github/copilot-sdk';
 
 const port = Number(process.env.COPILOT_API_PORT ?? 3001);
-const webOrigin = process.env.WEB_ORIGIN ?? 'http://localhost:3000';
+const webOrigin = process.env.WEB_ORIGIN ?? 'http://localhost:3100';
+const jellyguardApiBase = (process.env.JELLYGUARD_API_BASE ?? 'http://127.0.0.1:8000').replace(/\/$/, '');
+const jellyguardRestKey = process.env.JELLYGUARD_LOCAL_REST_KEY?.trim() ?? '';
 const credentialStatus = Object.freeze({
   copilotTokenConfigured: Boolean(process.env.COPILOT_GITHUB_TOKEN?.trim()),
-  nifsApiKeyConfigured: Boolean(process.env.NIFS_API_KEY?.trim()),
-  dataGoKrServiceKeyConfigured: Boolean(process.env.DATA_GO_KR_SERVICE_KEY?.trim()),
+  jellyguardRestKeyConfigured: Boolean(jellyguardRestKey),
+  nifsJellyKeyConfigured: Boolean(process.env.JELLYGUARD_NIFS_JELLY_KEY?.trim()),
+  khoaKeyConfigured: Boolean(process.env.JELLYGUARD_KHOA_KEY?.trim()),
 });
 
 const datasets = {
   jellyfish: {
-    label: '해파리 출현',
+    label: '해파리 보고',
     source: '국립수산과학원 해파리정보',
     cadence: '주간',
-    status: 'API 연결 전',
-    checks: ['출현 위치 표준화', '종명 확인', '미관측과 미출현 구분'],
+    connection: 'fixture',
+    checks: ['보고서와 위치 관측 구분', '게시일 최신성 확인', '미관측과 미출현 구분'],
   },
-  water_temperature: {
-    label: '수온',
-    source: '국립수산과학원 KODC',
-    cadence: '관측 주기별',
-    status: 'API 연결 전',
-    checks: ['섭씨 단위 확인', '표층·저층 분리', 'QC 플래그 확인'],
+  ocean_current: {
+    label: '해류 관측',
+    source: 'KHOA 해양관측부이·HF-RADAR',
+    cadence: '시간별 통합',
+    connection: 'fixture',
+    checks: ['유향 정의 확인', 'u/v 단위 확인', '레이더·부이 시간 정렬'],
   },
-  dissolved_oxygen: {
-    label: '용존산소',
-    source: '국립수산과학원 KODC',
-    cadence: '관측 주기별',
-    status: 'API 연결 전',
-    checks: ['단위 확인', '관측 수심 확인', 'QC 플래그 확인'],
+  marine_environment: {
+    label: '적조·해양환경',
+    source: '국립수산과학원 적조·정선해양관측',
+    cadence: '자료원별',
+    connection: 'fixture',
+    checks: ['수온·용존산소 단위 확인', '관측 수심 확인', 'QC·결측값 확인'],
   },
-  plankton: {
-    label: '플랑크톤',
-    source: '국가해양생태계종합조사',
-    cadence: '조사 주기별',
-    status: 'API 연결 전',
-    checks: ['동물·식물플랑크톤 분리', '개체수 단위 확인', '채집 정점 확인'],
+  risk_zone: {
+    label: '취수구 접근영역',
+    source: 'JellyGuard 조건부 연결 계산',
+    cadence: '시나리오 실행 시',
+    connection: 'synthetic_ready',
+    checks: ['합성·실자료 표시', '해류·수심 coverage 확인', '조건부 연결로 표기'],
   },
 } as const;
 
 type DatasetName = keyof typeof datasets;
 
+async function jellyguardGet(path: string) {
+  if (!jellyguardRestKey) throw new Error('JELLYGUARD_LOCAL_REST_KEY is not configured');
+  const response = await fetch(`${jellyguardApiBase}${path}`, {
+    headers: { 'x-jellyguard-local-key': jellyguardRestKey },
+    signal: AbortSignal.timeout(5000),
+  });
+  if (!response.ok) throw new Error(`JellyGuard responded with ${response.status}`);
+  return response.json();
+}
+
 const listDatasets = defineTool('list_datasets', {
   description: '서비스가 관리하는 해파리 관련 데이터셋 목록과 현재 상태를 조회한다.',
   parameters: { type: 'object', properties: {} },
-  handler: async () =>
-    Object.entries(datasets).map(([id, dataset]) => ({ id, ...dataset })),
+  handler: async () => {
+    try {
+      return await jellyguardGet('/v1/datasets');
+    } catch {
+      return {
+        backend: 'offline',
+        datasets: Object.entries(datasets).map(([id, dataset]) => ({ id, ...dataset })),
+      };
+    }
+  },
 });
 
 const getDatasetStatus = defineTool('get_dataset_status', {
@@ -65,10 +86,13 @@ const getDatasetStatus = defineTool('get_dataset_status', {
     },
     required: ['datasetName'],
   },
-  handler: async ({ datasetName }: { datasetName: DatasetName }) => ({
-    id: datasetName,
-    ...datasets[datasetName],
-  }),
+  handler: async ({ datasetName }: { datasetName: DatasetName }) => {
+    try {
+      return await jellyguardGet(`/v1/datasets/${datasetName}/status`);
+    } catch {
+      return { id: datasetName, backend: 'offline', ...datasets[datasetName] };
+    }
+  },
 });
 
 const checkDatasetQuality = defineTool('check_dataset_quality', {
@@ -85,14 +109,34 @@ const checkDatasetQuality = defineTool('check_dataset_quality', {
     required: ['datasetName'],
   },
   handler: async ({ datasetName }: { datasetName: DatasetName }) => {
-    const dataset = datasets[datasetName];
-    return {
-      dataset: dataset.label,
-      ready: false,
-      reason: '원본 API 키와 실제 데이터가 아직 연결되지 않았습니다.',
-      requiredChecks: dataset.checks,
-      nextAction: `${dataset.source} API 키와 수집 함수를 연결하세요.`,
-    };
+    try {
+      return await jellyguardGet(`/v1/datasets/${datasetName}/quality`);
+    } catch {
+      const dataset = datasets[datasetName];
+      return {
+        dataset: dataset.label,
+        ready: datasetName === 'risk_zone',
+        backend: 'offline',
+        reason: 'JellyGuard 백엔드에 연결되지 않아 로컬 스키마만 확인했습니다.',
+        requiredChecks: dataset.checks,
+        nextAction: 'JellyGuard 백엔드를 실행하고 연결 상태를 다시 확인하세요.',
+      };
+    }
+  },
+});
+
+const getRiskOverview = defineTool('get_risk_overview', {
+  description: '한울 공개 데모의 조건부 이동영역, 감시격자, 자료 모드와 주의사항을 조회한다.',
+  parameters: { type: 'object', properties: {} },
+  handler: async () => {
+    try {
+      return await jellyguardGet('/v1/dashboard/bootstrap');
+    } catch {
+      return {
+        status: 'offline',
+        message: 'JellyGuard 백엔드가 실행 중일 때 합성 이동영역과 감시격자를 조회할 수 있습니다.',
+      };
+    }
   },
 });
 
@@ -100,6 +144,7 @@ const readOnlyToolNames = new Set([
   'list_datasets',
   'get_dataset_status',
   'check_dataset_quality',
+  'get_risk_overview',
 ]);
 
 const copilot = new CopilotClient({ logLevel: 'warning' });
@@ -119,10 +164,14 @@ app.use(express.json({ limit: '64kb' }));
 
 app.get('/api/health', async (_req, res) => {
   try {
-    await ensureCopilotStarted();
+    const [, jellyguard] = await Promise.all([
+      ensureCopilotStarted(),
+      jellyguardGet('/v1/datasets').then(() => 'ready').catch(() => 'offline'),
+    ]);
     res.json({
       ok: true,
       copilot: 'ready',
+      jellyguard,
       datasets: Object.keys(datasets).length,
       credentials: credentialStatus,
     });
@@ -151,7 +200,7 @@ app.post('/api/copilot', async (req, res) => {
     const session = await copilot.createSession({
       sessionId: `jellywatch-${crypto.randomUUID()}`,
       model: 'auto',
-      tools: [listDatasets, getDatasetStatus, checkDatasetQuality],
+      tools: [listDatasets, getDatasetStatus, checkDatasetQuality, getRiskOverview],
       hooks: {
         onPreToolUse: async (input) => {
           if (readOnlyToolNames.has(input.toolName)) {
