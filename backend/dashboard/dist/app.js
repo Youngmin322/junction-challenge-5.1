@@ -104,7 +104,6 @@ function renderSources(sources) {
 
 function renderBasePlot() {
   drawAxes();
-  drawVectors();
   drawZones();
   drawSeeds();
 }
@@ -112,96 +111,11 @@ function renderBasePlot() {
 function renderScenario() {
   if (!state.bootstrap) return;
   drawAxes();
-  drawVectors();
   drawZones();
   drawSeeds();
   drawEnvelope();
   $('#plot-empty').hidden = Boolean(state.run);
   if (state.intersection) renderIntersections();
-}
-
-// 화살표 길이 축척: 그 지점의 유속으로 1시간 표류했을 때의 실제 이동 거리.
-// 픽셀당 m/s 같은 화면 단위가 아니라 지리적 변위로 잡아야 격자·이동범위와 같은
-// 좌표 투영을 그대로 쓸 수 있고, 축척이 화면 크기에 따라 달라지지 않는다.
-const VECTOR_DRIFT_SECONDS = 3600;
-const METERS_PER_DEGREE_LAT = 110540;
-const METERS_PER_DEGREE_LON_EQUATOR = 111320;
-// 범례 기준 유속. 이 값으로 실제 화살표와 동일한 계산을 거친 참조 화살표를 그린다.
-const VECTOR_LEGEND_SPEED_MS = 0.5;
-
-function driftDegrees(uMs, vMs, lat) {
-  const metersPerDegreeLon = METERS_PER_DEGREE_LON_EQUATOR * Math.cos(lat * Math.PI / 180);
-  return {
-    lon: uMs * VECTOR_DRIFT_SECONDS / metersPerDegreeLon,
-    lat: vMs * VECTOR_DRIFT_SECONDS / METERS_PER_DEGREE_LAT,
-  };
-}
-
-function drawVectors() {
-  const facts = state.bootstrap?.data.current_vectors;
-  renderVectorNote(facts);
-  const box = state.bootstrap?.data.domain?.bbox;
-  if (!facts || facts.state !== 'AVAILABLE' || !box) {
-    $('#plot-vectors').innerHTML = '';
-    return;
-  }
-  const inside = (facts.vectors || []).filter((vector) =>
-    vector.lon >= box.lon_min && vector.lon <= box.lon_max
-    && vector.lat >= box.lat_min && vector.lat <= box.lat_max);
-  const arrows = inside.map((vector) => {
-    const drift = driftDegrees(vector.u_ms, vector.v_ms, vector.lat);
-    const tail = project(vector.lon, vector.lat);
-    const head = project(vector.lon + drift.lon, vector.lat + drift.lat);
-    return `<circle class="vector-origin" cx="${tail.x}" cy="${tail.y}" r="1.6" />`
-      + `<line class="vector-arrow" x1="${tail.x}" y1="${tail.y}" x2="${head.x}" y2="${head.y}" marker-end="url(#vector-head)"><title>${escapeHtml(vector.speed_ms)} m/s · ${escapeHtml(vector.bearing_deg_toward)}° 방향</title></line>`;
-  });
-  $('#plot-vectors').innerHTML = arrows.join('') + vectorScaleBar(box);
-}
-
-function vectorScaleBar(box) {
-  // 참조 화살표도 실제 화살표와 같은 투영·같은 환산을 거친다. 길이를 눈대중으로
-  // 고정해 두면 범례가 화살표를 설명하지 못하고 장식이 된다.
-  const centerLat = (box.lat_min + box.lat_max) / 2;
-  const drift = driftDegrees(VECTOR_LEGEND_SPEED_MS, 0, centerLat);
-  const origin = project(box.lon_min, box.lat_min);
-  const length = project(box.lon_min + drift.lon, centerLat).x - origin.x;
-  const x = 92;
-  const y = 552;
-  return `<rect class="vector-scale-bg" x="${x - 12}" y="${y - 30}" width="${length + 34}" height="46" rx="8" />`
-    + `<line class="vector-arrow" x1="${x}" y1="${y - 12}" x2="${x + length}" y2="${y - 12}" marker-end="url(#vector-head)" />`
-    + `<text class="vector-scale-label" x="${x}" y="${y - 17}">${VECTOR_LEGEND_SPEED_MS} m/s</text>`
-    + `<text class="vector-scale-caption" x="${x}" y="${y + 8}">화살표 = 1시간 표류 거리</text>`;
-}
-
-function renderVectorNote(facts) {
-  const note = $('#vector-note');
-  const badge = $('#vector-badge');
-  const message = $('#vector-message');
-  if (!facts) {
-    note.dataset.state = 'NONE';
-    badge.textContent = '유속 벡터 상태 확인 전';
-    message.textContent = '자료를 불러오면 표층 유속 벡터 상태가 표시됩니다.';
-    return;
-  }
-  note.dataset.state = facts.state;
-  const check = facts.convention_check || {};
-  const evidence = check.correlation_toward === null || check.correlation_toward === undefined
-    ? ''
-    : ` 상관 ${check.correlation_toward} · 표본 ${check.sample_size}개.`;
-  if (facts.state === 'AVAILABLE') {
-    badge.textContent = 'convention: 검산 기반·공급자 미확인';
-    const direction = facts.convention === 'TOWARD' ? '가리키는 쪽으로 흐름(TOWARD)' : '오는 쪽 표기(FROM)를 뒤집어 적용';
-    message.textContent = `${facts.public_message} 판정 ${facts.convention} · ${direction}.${evidence}`
-      + ` 화살표 ${facts.vector_count}개 (전체 격자 ${facts.field_cell_count ?? '—'}칸에서 추출).`;
-    return;
-  }
-  if (facts.state === 'WITHHELD_UNVERIFIED_CONVENTION') {
-    badge.textContent = '유향 규약 미검증 · 벡터 미표시';
-    message.textContent = `${facts.public_message}${evidence}`;
-    return;
-  }
-  badge.textContent = '실측 유동장 없음';
-  message.textContent = `${facts.public_message} 사유: ${labelForState(facts.reason_code)}.`;
 }
 
 function drawAxes() {
