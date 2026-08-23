@@ -12,7 +12,6 @@ type Horizon = 3 | 6 | 12;
 const copilotApiBase = process.env.NEXT_PUBLIC_COPILOT_API_BASE ?? 'http://localhost:3001';
 
 const assets = {
-  mark: '/design-assets/mops-mark.svg',
   basemap: '/design-assets/abstract-basemap.svg',
   domain: '/design-assets/synth-domain-hatched.svg',
   envelope3: '/design-assets/synthetic-envelope-3h.png',
@@ -133,13 +132,12 @@ function MonitoringMap({ selectedHorizon, onSelectHorizon }: {
   return (
     <section className="panel map-panel" aria-labelledby="map-title">
       <header className="panel-header map-header">
-        <div><h2 id="map-title">한울 공개 감시 화면</h2><p>최근 확보 관측 · 합성 {selectedHorizon}h 이동영역</p></div>
-        <div className="layer-legend" aria-label="지도 레이어 범례">
-          <span><i className="legend-dot violet" />최근 관측</span>
-          <span><i className="legend-square blue" />보고서</span>
-          <span><i className="legend-dot cyan" />ROMS 상태</span>
-          <span><i className="legend-square orange" />SYNTHETIC {selectedHorizon}h</span>
-          <span><i className="legend-square rose" />감시격자</span>
+        <h2 className="sr-only" id="map-title">한울 공개 감시 화면</h2>
+        <div className="unit-tabs" aria-label="한울 감시 화면 범위" role="list">
+          <span aria-current="page" className="is-active" role="listitem">한울 1·2호기</span>
+          <span role="listitem">한울 3·4호기</span>
+          <span role="listitem">한울 5·6호기</span>
+          <span role="listitem">신한울 1·2호기</span>
         </div>
       </header>
 
@@ -207,7 +205,7 @@ function CopilotPanel({ state }: { state: ConnectionState }) {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const quickPrompts = ['최근 확보 관측 근거', 'ROMS vector 없는 이유', '수송 엔진 차이'];
+  const quickPrompts = ['직접관측 / 보고서 구분', '면 유동장 없는 이유', '감시격자 근거'];
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
@@ -274,7 +272,7 @@ function CopilotPanel({ state }: { state: ConnectionState }) {
         <header><strong>표층조건부 이동 · SYNTHETIC READY</strong><span>READY</span></header>
         <p>{dashboardFixture.transport.scenario} · 3/6/12h · {dashboardFixture.transport.members} members</p>
         <small>fixture · watch-cell core · 나곡 {dashboardFixture.intersection.members} of {dashboardFixture.intersection.totalMembers}<br />최초 교차 {dashboardFixture.intersection.firstWindow} · 실제 예보 아님</small>
-        <code>engine · {dashboardFixture.transport.engine} · {dashboardFixture.transport.seedId}</code>
+        <button onClick={() => document.getElementById('provenance-title')?.scrollIntoView({ behavior: 'smooth', block: 'center' })} type="button">실행 근거 보기</button>
       </section>
     </aside>
   );
@@ -283,7 +281,7 @@ function CopilotPanel({ state }: { state: ConnectionState }) {
 function EvidenceGrid() {
   return (
     <section className="panel evidence-panel" aria-labelledby="evidence-title">
-      <header className="evidence-heading"><h2 id="evidence-title">증거층과 계산상태를 섞지 않고 조회</h2><p>과거 관측 ≠ 합성 시나리오 ≠ ROMS field</p></header>
+      <header className="evidence-heading"><h2 id="evidence-title">이어보기 · 증거층 탐색</h2><p>직접관측 · 보고서 catalog/context · 점 해양관측 · 조건부 시나리오 · 자료부족</p></header>
       <div className="evidence-grid">
         {evidenceCards.map((card) => (
           <article className={`evidence-card evidence-card--${card.tone}`} key={card.code}>
@@ -322,6 +320,7 @@ export default function Home() {
   const [selectedHorizon, setSelectedHorizon] = useState<Horizon>(12);
   const [copilotState, setCopilotState] = useState<ConnectionState>('checking');
   const [backendState, setBackendState] = useState<ConnectionState>('checking');
+  const [healthCheck, setHealthCheck] = useState(0);
   const provenanceRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
@@ -334,24 +333,20 @@ export default function Home() {
         setBackendState((body.mops ?? body.jellyguard) === 'ready' ? 'ready' : 'offline');
       })
       .catch(() => { setCopilotState('offline'); setBackendState('offline'); });
-  }, []);
-
-  function showContractDetails() {
-    provenanceRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    provenanceRef.current?.focus({ preventScroll: true });
-  }
+  }, [healthCheck]);
 
   return (
     <main className="mops-app">
       <div className="dashboard-shell">
         <header className="global-header">
-          <div className="brand"><Image alt="MOPS" height={32} priority src={assets.mark} width={32} /><div><h1>한울 주변 대량 해파리 군집 감시</h1><p>공개데이터 기반 조건부 이동·근거 조회</p></div></div>
-          <div className="header-meta"><span>HANUL DEMO</span><i /><strong>FIXTURE PREVIEW · 단일 브랜치 실행 아님</strong><Tag tone="local">SDK · LOCAL</Tag></div>
+          <div className="brand"><div><h1>원전 주변 해양 생물 이동 경로 예측 시스템</h1><p>MOPS_PUBLIC_DEMO · 조회 실행 2026.08.23 14:32 KST</p></div></div>
+          <Tag tone="local">SDK · LOCAL</Tag>
+          <div className="header-meta"><button aria-label="대상 원전: 한울 (MVP 고정)" className="plant-selector" disabled type="button">한울 <span aria-hidden="true">⌄</span></button><button className="refresh-button" onClick={() => setHealthCheck((value) => value + 1)} type="button">상태 다시 확인</button></div>
         </header>
 
         <section className="status-bar" aria-label="대시보드 상태 요약">
-          <div className="status-summary"><span className="status-light" /><strong>관측 READY · 합성 시나리오 READY</strong><p>실측 ROMS · NO_FIELD — 표시할 면 field 없음 · 합성 결과와 분리</p></div>
-          <div className="status-actions"><Tag tone="cached">CACHED 관측</Tag><Tag tone="live">LIVE 조건부 · Gate</Tag><Tag tone="synthetic">SYNTHETIC 사용</Tag><button onClick={showContractDetails} type="button">계약 상태 보기</button></div>
+          <div className="status-summary"><span className="status-light" /><strong>한울 감시 화면</strong><p>실측 ROMS · NO_FIELD — 표시할 면 field 없음 · 합성 결과와 분리</p></div>
+          <div className="status-actions"><Tag tone="cached">CACHED 사용</Tag><Tag tone="live">LIVE 조건부 · GATE</Tag><Tag tone="synthetic">SYNTHETIC 사용</Tag></div>
         </section>
 
         <div className="primary-grid"><MonitoringMap onSelectHorizon={setSelectedHorizon} selectedHorizon={selectedHorizon} /><CopilotPanel state={copilotState} /></div>
