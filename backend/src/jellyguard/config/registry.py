@@ -62,6 +62,24 @@ SOURCE_REGISTRY = {
         ),
         SourceDefinition("khoa_roms_live", "field", (DataMode.LIVE,), None, True),
         SourceDefinition(
+            "khoa_crnt_fcst_reference",
+            "direction_reference",
+            (DataMode.LIVE,),
+            ClaimType.CONTEXT,
+            True,
+        ),
+        # Genuinely 13 valid HF-radar stations, all south/west of Hanul (nearest ~120 km).
+        # Distinct from khoa_hf_current_regression: that source was the rejected "treat
+        # the HF grid as a Hanul field" path and is left untouched. This one never claims
+        # Hanul coverage -- it is southern/western-coast context, informational only.
+        SourceDefinition(
+            "khoa_hf_current_reference",
+            "direction_reference",
+            (DataMode.LIVE,),
+            ClaimType.CONTEXT,
+            True,
+        ),
+        SourceDefinition(
             "nifs_jelly_detail2_unverified",
             "report_catalog",
             (DataMode.LIVE,),

@@ -29,8 +29,14 @@ def create_mcp_server(
         limit: int = 100,
         cursor: str | None = None,
         include_scenario_seeds: bool = False,
+        demo_current_cluster: bool = False,
     ) -> DomainResult:
-        """직접관측과 보고서 catalog를 분리해 검색합니다."""
+        """직접관측과 보고서 catalog를 분리해 검색합니다.
+
+        demo_current_cluster=True이면 현재 로드된 관측 소스 중 observed_at이 가장 최근인
+        레코드를 데모용 '현재 군집'으로 지정해 함께 반환합니다. 실시간 수신이 아니며,
+        원본 observed_at과 지정 사실을 그대로 노출합니다.
+        """
 
         return service.search_observations(
             site_id=site_id,
@@ -43,6 +49,7 @@ def create_mcp_server(
             limit=limit,
             cursor=cursor,
             include_scenario_seeds=include_scenario_seeds,
+            demo_current_cluster=demo_current_cluster,
         )
 
     @server.tool()

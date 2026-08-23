@@ -28,10 +28,15 @@ from .ports import KeyValueStore
 from .provenance import deterministic_digest
 from .source_state import SourceResolver, SourceState
 from .transport import (
+    DASHBOARD_VECTOR_LIMIT,
     SYNTHETIC_PROFILES,
     DomainGrid,
+    MeasuredField,
     deterministic_run_seed,
+    downsample_field_vectors,
+    parse_live_field_ref,
     parse_synthetic_field_ref,
+    run_measured_transport,
     run_synthetic_transport,
 )
 
@@ -328,12 +333,85 @@ class DomainService:
             run_id=run_id,
         )
 
+    # The arrow overlay describes exactly one thing: the measured ROMS area field. That source
+    # is live-only, so it is resolved with the modes it actually supports rather than with the
+    # dashboard's CACHED/SYNTHETIC projection modes, which would silently resolve to nothing.
+    # Offline this lands on LIVE_DISABLED and the dashboard reports the absence.
+    VECTOR_MODES = (DataMode.LIVE, DataMode.CACHED)
+
+    def _current_vector_facts(self) -> dict:
+        """Project the measured field into dashboard arrows, or explain why there are none.
+
+        Three outcomes are kept distinct because they mean different things to a viewer: no
+        field arrived at all, a field arrived but its direction convention is unsettled, and a
+        field arrived with a settled convention. Collapsing the middle case into the first
+        would hide that the data is in hand and only the reading of it is withheld.
+        """
+        resolution = self.source_resolver.resolve("khoa_roms_live", list(self.VECTOR_MODES))
+        summary = (resolution.manifest or {}).get("grid_summary") or {}
+        check = summary.get("convention_check") or None
+        verdict = (check or {}).get("verdict")
+        facts = {
+            "source_id": "khoa_roms_live",
+            "convention": None,
+            "convention_check": check,
+            "crdir_convention": summary.get("crdir_convention"),
+            "valid_at_local": summary.get("valid_from_local"),
+            "field_cell_count": summary.get("cell_count"),
+            "covered_bbox": summary.get("covered_bbox"),
+            "vector_limit": DASHBOARD_VECTOR_LIMIT,
+            "vector_count": 0,
+            "vectors": [],
+        }
+        if not resolution.payload or not summary.get("is_area_field"):
+            return {
+                **facts,
+                "state": "NO_FIELD",
+                "reason_code": resolution.public_reason_code or ErrorCode.NO_COVERAGE.value,
+                "public_message": "실측 면 유동장이 없어 표시할 유속 벡터가 없습니다.",
+            }
+        if verdict not in {"TOWARD", "FROM"}:
+            return {
+                **facts,
+                "state": "WITHHELD_UNVERIFIED_CONVENTION",
+                "reason_code": ErrorCode.DIRECTION_UNVERIFIED.value,
+                "public_message": (
+                    "유향 규약이 검증되지 않아 유속 벡터를 표시하지 않습니다. "
+                    "180도 반대로 그려질 수 있어 방향을 추정하지 않습니다."
+                ),
+            }
+        try:
+            field = MeasuredField.from_rows(
+                resolution.payload, field_id="khoa_roms_live", convention=verdict
+            )
+        except ValueError:
+            return {
+                **facts,
+                "state": "NO_FIELD",
+                "reason_code": ErrorCode.SCHEMA_INVALID.value,
+                "public_message": "실측 유동장 행에서 사용 가능한 유속을 읽지 못했습니다.",
+            }
+        vectors = downsample_field_vectors(field)
+        return {
+            **facts,
+            "state": "AVAILABLE",
+            "convention": verdict,
+            "reason_code": None,
+            "vector_count": len(vectors),
+            "vectors": vectors,
+            "public_message": (
+                "유향 규약은 수온 이류 부호검정으로 판정한 값이며 공급자 문서로 확인된 값이 "
+                "아닙니다."
+            ),
+        }
+
     def dashboard_bootstrap(self, site_id: str = "HANUL_PUBLIC_DEMO") -> DomainResult:
         source_status = self.get_source_status(
             site_id=site_id,
             allowed_modes=["CACHED", "SYNTHETIC"],
             include_internal=False,
         )
+        current_vectors = self._current_vector_facts()
         return self._result(
             tool_name="dashboard_bootstrap",
             status=CalculationStatus(source_status.status),
@@ -346,6 +424,7 @@ class DomainService:
                 "sources": source_status.data["sources"],
                 "source_status": source_status.status,
                 "source_warnings": source_status.warnings,
+                "current_vectors": current_vectors,
                 "horizons_h": [3, 6, 12],
                 "profiles": ["B0_hold", "B2_current_only", "B3"],
                 "dashboard_contract": "offline_public_watch_cells_v1",
@@ -355,9 +434,38 @@ class DomainService:
                 "합성 유동장에 의존한 조건부 시나리오입니다. 실제 예보가 아닙니다.",
                 "합성 사각 도메인입니다. 해안선·육지·수심을 반영하지 않으며 입자가 육상 위를 지날 수 있습니다.",
                 "공개 관측점 기반 프로토타입 감시격자입니다. 실제 취수구·안전계통 경계가 아닙니다.",
+                current_vectors["public_message"],
             ],
             query_id=self.new_id("QUERY"),
         )
+
+    @staticmethod
+    def _latest_known_cluster(candidates: list[dict], catalog: list[dict]) -> dict | None:
+        """Point at whichever already-loaded, timestamped record is newest, honestly labeled.
+
+        This never invents or reinterprets a timestamp. It only compares the `observed_at`
+        values already present on records that also carry a `geometry` (i.e. records that are
+        actually point observations, not report bulletins like the NIFS catalog today). If a
+        live source is ever configured and starts returning real point observations, it wins
+        this comparison automatically because it is simply newer — nothing here is hardcoded
+        to the historical fixture.
+        """
+        pool = [
+            record
+            for record in (*candidates, *catalog)
+            if record.get("observed_at") and record.get("geometry")
+        ]
+        if not pool:
+            return None
+        latest = max(pool, key=lambda record: record["observed_at"])
+        observed_date = str(latest["observed_at"])[:10]
+        designated = deepcopy(latest)
+        designated["designated_as"] = "latest_available_demo_cluster"
+        designated["demo_current_cluster_warning"] = (
+            "실시간 관측이 없어 데모 목적으로 가장 최근에 확보된 과거 관측을 "
+            f"'현재 군집'으로 지정했습니다. 관측 시각은 {observed_date}이며 실시간이 아닙니다."
+        )
+        return designated
 
     def search_observations(
         self,
@@ -372,6 +480,7 @@ class DomainService:
         limit: int = 100,
         cursor: str | None = None,
         include_scenario_seeds: bool = False,
+        demo_current_cluster: bool = False,
     ) -> DomainResult:
         modes = self._modes(allowed_modes)
         observation_resolution = self.source_resolver.resolve(
@@ -403,6 +512,7 @@ class DomainService:
             "presence": presence,
             "limit": limit,
             "cursor": cursor,
+            "demo_current_cluster": demo_current_cluster,
         }
 
         try:
@@ -438,6 +548,7 @@ class DomainService:
                     "candidates_scanned": 0,
                     "excluded_counts": {},
                     "scenario_seeds_returned": 0,
+                    "latest_cluster": None,
                 },
                 status_reasons=[ErrorCode.SCHEMA_INVALID.value],
                 error=ServiceError(code=ErrorCode.SCHEMA_INVALID, message=str(exc)),
@@ -505,6 +616,12 @@ class DomainService:
             if include_scenario_seeds and DataMode.SYNTHETIC in modes
             else []
         )
+        # Computed from the unfiltered candidate pools (not the query-filtered `records`),
+        # because "the latest known cluster" is a standing demo designation, not an answer to
+        # this particular query's bbox/time filters.
+        latest_cluster = (
+            self._latest_known_cluster(candidates, catalog) if demo_current_cluster else None
+        )
         if not records and not catalog:
             return self._result(
                 tool_name="search_observations",
@@ -519,12 +636,18 @@ class DomainService:
                     "candidates_scanned": 0,
                     "excluded_counts": {},
                     "scenario_seeds_returned": len(scenario_seeds),
+                    "latest_cluster": latest_cluster,
                 },
                 status_reasons=[ErrorCode.NO_COMPATIBLE_SOURCE.value],
                 modes=[DataMode.SYNTHETIC] if scenario_seeds else [],
                 error=ServiceError(
                     code=ErrorCode.NO_COMPATIBLE_SOURCE,
                     message="허용된 모드에서 관측·catalog 자료를 선택할 수 없습니다.",
+                ),
+                warnings=(
+                    [latest_cluster["demo_current_cluster_warning"]]
+                    if latest_cluster is not None
+                    else []
                 ),
                 query_id=self.new_id("QUERY"),
             )
@@ -565,6 +688,7 @@ class DomainService:
                 "candidates_scanned": len(candidates),
                 "excluded_counts": excluded_counts,
                 "scenario_seeds_returned": len(scenario_seeds),
+                "latest_cluster": latest_cluster,
             },
             modes=used_modes,
             selected_sources=[
@@ -583,12 +707,19 @@ class DomainService:
                     if catalog_resolution.public_reason is not None
                     else []
                 ),
+                *(
+                    [latest_cluster["demo_current_cluster_warning"]]
+                    if latest_cluster is not None
+                    else []
+                ),
             ],
             query_id=self.new_id("QUERY"),
         )
 
     @staticmethod
-    def _roms_field_facts(grid_summary: dict | None, reason_code: str) -> dict:
+    def _roms_field_facts(
+        grid_summary: dict | None, reason_code: str, field_ref: str | None = None
+    ) -> dict:
         """Report what the ROMS response actually contained, including why it is unused.
 
         The field can be present and still be unusable for transport, so availability and
@@ -609,8 +740,10 @@ class DomainService:
             "issue_time_published": grid_summary.get("issue_time_published"),
             "depth_class": grid_summary.get("depth_class"),
             "crdir_convention": grid_summary.get("crdir_convention"),
-            "usable_for_transport": False,
-            "excluded_reason": reason_code,
+            "convention_check": grid_summary.get("convention_check"),
+            "usable_for_transport": field_ref is not None,
+            "field_ref": field_ref,
+            "excluded_reason": None if field_ref else reason_code,
         }
 
     def get_field_status(
@@ -655,7 +788,20 @@ class DomainService:
             (roms_resolution.manifest or {}).get("grid_summary") if roms_field_available else None
         )
         roms_is_area_field = bool(roms_grid and roms_grid.get("is_area_field"))
-        if roms_field_available and roms_is_area_field:
+        roms_convention = (roms_grid or {}).get("convention_check") or {}
+        roms_convention_settled = roms_convention.get("verdict") in {"TOWARD", "FROM"}
+        roms_usable = roms_field_available and roms_is_area_field and roms_convention_settled
+        roms_field_ref = (
+            "live:SYNTH_DOMAIN_HANUL_v1.khoa_roms_live:unknown:"
+            f"{(roms_grid or {}).get('valid_from_local')}"
+            if roms_usable
+            else None
+        )
+        if roms_usable:
+            # Coverage and direction are both settled, so this is a real transport input.
+            roms_reason = ""
+            roms_status = CalculationStatus.READY
+        elif roms_field_available and roms_is_area_field:
             # Coverage is satisfied; the blocker is now the unverified direction convention.
             roms_reason = ErrorCode.DIRECTION_UNVERIFIED.value
             roms_status = CalculationStatus.DEGRADED
@@ -669,12 +815,13 @@ class DomainService:
         components = [
             ComponentStatus(
                 source_id="khoa_roms_live",
-                role="rejected_candidate",
+                role="required_input" if roms_usable else "rejected_candidate",
+                selected=roms_usable,
                 status=roms_status,
                 source_data_mode=DataMode(roms_resolution.data_mode)
                 if roms_field_available and roms_resolution.data_mode
                 else None,
-                reason_codes=[roms_reason],
+                reason_codes=[] if roms_usable else [roms_reason],
                 source_state=roms_resolution.state.value,
             ),
             ComponentStatus(
@@ -713,8 +860,10 @@ class DomainService:
             ),
         ]
         selected: list[dict] = []
+        if roms_usable:
+            selected.append(self._resolved_source_entry(roms_resolution, "required_input"))
         excluded = [
-            {"source_id": "khoa_roms_live", "reason_code": roms_reason},
+            *([] if roms_usable else [{"source_id": "khoa_roms_live", "reason_code": roms_reason}]),
             {"source_id": "khoa_hf_current_regression", "reason_code": ErrorCode.NO_COVERAGE.value},
             {
                 "source_id": "khoa_roms_blocked_fixture",
@@ -750,9 +899,9 @@ class DomainService:
                     "field_candidates": [
                         component.model_dump(mode="json") for component in components
                     ],
-                    "selected_field_ref": synthetic_refs["B2_current_only"],
+                    "selected_field_ref": roms_field_ref or synthetic_refs["B2_current_only"],
                     "synthetic_field_refs": synthetic_refs,
-                    "roms_field": self._roms_field_facts(roms_grid, roms_reason),
+                    "roms_field": self._roms_field_facts(roms_grid, roms_reason, roms_field_ref),
                     "point_context": point_resolution.payload if point_context_available else [],
                     "context": [] if not include_context else [{"context_ui_enabled": False}],
                     "request_echo": {
@@ -791,8 +940,8 @@ class DomainService:
             claim_type=ClaimType.DIAGNOSTIC,
             data={
                 "field_candidates": [component.model_dump(mode="json") for component in components],
-                "selected_field_ref": None,
-                "roms_field": self._roms_field_facts(roms_grid, roms_reason),
+                "selected_field_ref": roms_field_ref,
+                "roms_field": self._roms_field_facts(roms_grid, roms_reason, roms_field_ref),
                 "point_context": point_resolution.payload if point_context_available else [],
                 "context": [],
                 "request_echo": {
@@ -856,6 +1005,51 @@ class DomainService:
             query_id=self.new_id("QUERY"),
         )
 
+    def _load_measured_field(
+        self, field_ref: str, domain_id: str, modes: list[DataMode]
+    ) -> tuple[MeasuredField | None, ServiceError | None]:
+        """Resolve a live field reference into a sampler, or explain why it cannot be one."""
+        try:
+            source_id = parse_live_field_ref(field_ref, domain_id)
+        except LookupError as exc:
+            return None, ServiceError(code=ErrorCode.NO_COMPATIBLE_SOURCE, message=str(exc))
+        except ValueError as exc:
+            return None, ServiceError(code=ErrorCode.SCHEMA_INVALID, message=str(exc))
+        if source_id != "khoa_roms_live":
+            return None, ServiceError(
+                code=ErrorCode.NO_COMPATIBLE_SOURCE,
+                message="실측 수송장으로 승인된 소스가 아닙니다.",
+            )
+        resolution = self.source_resolver.resolve(source_id, modes)
+        manifest = resolution.manifest or {}
+        summary = manifest.get("grid_summary") or {}
+        verdict = (summary.get("convention_check") or {}).get("verdict")
+        if not resolution.payload:
+            return None, ServiceError(
+                code=ErrorCode.NO_COVERAGE,
+                message="실측 field를 가져오지 못했습니다.",
+                unavailable_reason=resolution.public_reason_code or "no_field",
+            )
+        if verdict not in {"TOWARD", "FROM"}:
+            return None, ServiceError(
+                code=ErrorCode.DIRECTION_UNVERIFIED,
+                message="유향 convention이 판정되지 않아 수송장으로 사용할 수 없습니다.",
+                unavailable_reason="direction_unverified",
+            )
+        if not summary.get("is_area_field"):
+            return None, ServiceError(
+                code=ErrorCode.NO_COVERAGE,
+                message="단일 점 응답은 면 유동장이 아닙니다.",
+                unavailable_reason="not_an_area_field",
+            )
+        try:
+            field = MeasuredField.from_rows(
+                resolution.payload, field_id=source_id, convention=verdict
+            )
+        except ValueError as exc:
+            return None, ServiceError(code=ErrorCode.SCHEMA_INVALID, message=str(exc))
+        return field, None
+
     def run_transport(
         self,
         *,
@@ -879,6 +1073,12 @@ class DomainService:
                 code=ErrorCode.SCHEMA_INVALID,
                 message="지원하지 않는 transport engine입니다.",
                 required=[f"engine: {', '.join(TRANSPORT_ENGINES)}"],
+            )
+        elif engine == RISK_ZONE_ENGINE_ID and (field_ref or "").startswith("live:"):
+            error = ServiceError(
+                code=ErrorCode.NO_COMPATIBLE_SOURCE,
+                message="TypeScript 위험영역 엔진은 합성 field만 지원합니다.",
+                required=["실측 ROMS field에는 synthetic-rk4-v1 엔진 선택"],
             )
         elif boundary_rule is not None:
             error = ServiceError(
@@ -915,7 +1115,14 @@ class DomainService:
                 code=ErrorCode.GATE_MAPPING_BLOCKED,
                 message="승인된 DEMO_GATE mapping만 사용할 수 있습니다.",
             )
-        elif DataMode.SYNTHETIC not in modes:
+        elif (field_ref or "").startswith("live:") and DataMode.LIVE not in modes:
+            error = ServiceError(
+                code=ErrorCode.MODE_NOT_ALLOWED,
+                message="실측 field 사용이 명시적으로 허용되지 않았습니다.",
+                unavailable_reason="mode_not_allowed",
+                required=["allowed_modes에 LIVE 명시"],
+            )
+        elif not (field_ref or "").startswith("live:") and DataMode.SYNTHETIC not in modes:
             error = ServiceError(
                 code=ErrorCode.MODEL_BLOCKED,
                 message="합성 field 사용이 명시적으로 허용되지 않았습니다.",
@@ -958,7 +1165,10 @@ class DomainService:
                     break
 
         profile_id: str | None = None
-        if error is None and field_ref is not None:
+        measured_field: MeasuredField | None = None
+        if error is None and field_ref is not None and field_ref.startswith("live:"):
+            measured_field, error = self._load_measured_field(field_ref, grid.domain_id, modes)
+        elif error is None and field_ref is not None:
             if not field_ref.startswith("synthetic:"):
                 if "khoa_tw_recent_hanul" in field_ref:
                     error = ServiceError(
@@ -1025,6 +1235,13 @@ class DomainService:
             self.run_store.put(run_id, result.model_dump(mode="json"))
             return result
 
+        actual_engine = (
+            RISK_ZONE_ENGINE_ID
+            if engine == RISK_ZONE_ENGINE_ID
+            else "measured-rk4-v1"
+            if measured_field is not None
+            else SYNTHETIC_ENGINE_ID
+        )
         run_seed = deterministic_run_seed(
             {
                 "seed_ids": tuple(sorted(seed_ids)),
@@ -1032,7 +1249,7 @@ class DomainService:
                 "horizons_h": tuple(normalized_horizons),
                 "scenario_id": scenario_id,
                 "gate_mapping": gate_mapping,
-                "engine_version": engine,
+                "engine_version": actual_engine,
                 "selection_policy_version": "selection-v1",
                 "gate_policy_version": "gate-v1",
             }
@@ -1069,6 +1286,14 @@ class DomainService:
                 )
                 self.run_store.put(run_id, result.model_dump(mode="json"))
                 return result
+        elif measured_field is not None:
+            computed, artifact = run_measured_transport(
+                seeds=valid_seeds,
+                grid=grid,
+                field=measured_field,
+                horizons_h=normalized_horizons,
+                run_seed=run_seed,
+            )
         else:
             computed, artifact = run_synthetic_transport(
                 seeds=valid_seeds,
@@ -1077,6 +1302,50 @@ class DomainService:
                 horizons_h=normalized_horizons,
                 run_seed=run_seed,
             )
+
+        domain_warnings: list[str] = []
+        if measured_field is not None:
+            expansion = computed.get("domain_expansion") or {}
+            insufficient = computed.get("domain_insufficient_horizons") or []
+            if insufficient:
+                # 확장을 다 해보고도 계산창이 부족하면 잘린 envelope를 READY로 내보내지 않는다.
+                # 얇아진 member 구름을 그대로 보고하면 "이만큼만 퍼진다"는 거짓 결론이 된다.
+                stop_reason = expansion.get("stopped_reason") or "domain_insufficient"
+                error = ServiceError(
+                    code=ErrorCode.DOMAIN_INSUFFICIENT,
+                    message=(
+                        f"계산창을 {expansion.get('expansions_applied', 0)}회 "
+                        f"({expansion.get('expansion_factor', 0):.0%}씩) 확장했지만 "
+                        f"경계를 벗어난 member 비율이 여전히 "
+                        f"{computed['domain_exit_tolerance']:.0%}를 넘습니다 "
+                        f"(h={insufficient}). 잘린 envelope를 결과로 내보내지 않습니다."
+                    ),
+                    unavailable_reason=stop_reason,
+                    required=["실측 유동장 footprint를 넓힌 재조회"],
+                )
+                result = self._result(
+                    tool_name="run_transport",
+                    status=CalculationStatus.BLOCKED,
+                    claim_type=ClaimType.CONDITIONAL_SCENARIO,
+                    data={
+                        **request_echo,
+                        "computed_metric": None,
+                        "domain_expansion": expansion,
+                    },
+                    status_reasons=[error.code.value],
+                    modes=[],
+                    error=error,
+                    run_id=run_id,
+                )
+                self.run_store.put(run_id, result.model_dump(mode="json"))
+                return result
+            if expansion.get("expansions_applied"):
+                domain_warnings.append(
+                    f"실측 유동장에 비해 계산창이 좁아 "
+                    f"{expansion['expansion_factor']:.0%}씩 "
+                    f"{expansion['expansions_applied']}회 확장한 뒤 재계산했습니다. "
+                    "envelope의 격자 원점이 요청 도메인과 다릅니다."
+                )
         artifact["zones"] = deepcopy(self.demo_zones)
         artifact_id = f"ART-{run_seed:016x}"
         if self.artifact_store.get(artifact_id) is None:
@@ -1089,17 +1358,26 @@ class DomainService:
                 **request_echo,
                 "computed_metric": computed,
                 "artifact_refs": [f"jsonl://artifacts/{artifact_id}"],
-                "engine_version": engine,
+                "engine_version": actual_engine,
                 "reproducibility": computed["reproducibility"],
                 "disclaimer_code": "NOT_INTAKE_STRUCTURE",
             },
-            modes=[DataMode.SYNTHETIC],
+            modes=[DataMode.LIVE if measured_field is not None else DataMode.SYNTHETIC],
             selected_sources=[
                 *(
                     self._scenario_seed_source(seed)
                     for seed in sorted(valid_seeds, key=lambda item: item["seed_id"])
                 ),
-                self._source_entry("synthetic_field", "required_input"),
+                (
+                    {
+                        "source_id": "khoa_roms_live",
+                        "role": "required_input",
+                        "data_mode": DataMode.LIVE.value,
+                        "license": "public-data",
+                    }
+                    if measured_field is not None
+                    else self._source_entry("synthetic_field", "required_input")
+                ),
                 *(
                     [self._source_entry("synthetic_bathymetry_flat", "required_input")]
                     if engine == RISK_ZONE_ENGINE_ID
@@ -1107,7 +1385,6 @@ class DomainService:
                 ),
             ],
             warnings=[
-                "합성 유동장에 의존한 조건부 시나리오입니다. 실제 예보가 아닙니다.",
                 *(
                     [
                         "평탄 합성 수심을 사용합니다. 실제 해안선·수심이 아니므로 통과판정은 도메인 커버리지 검사로만 작동합니다.",
@@ -1116,9 +1393,17 @@ class DomainService:
                     ]
                     if engine == RISK_ZONE_ENGINE_ID
                     else [
+                        "공개 ROMS 표층 실측 유동장입니다. 표층 조건부이며 수심별 흐름이 아닙니다.",
+                        "유향 규약은 수온 이류 검정으로 판정했습니다. 공급자 문서로 확인된 값이 아닙니다.",
+                        "합성 사각 도메인입니다. 실제 해안선·육지·수심을 반영하지 않습니다.",
+                    ]
+                    if measured_field is not None
+                    else [
+                        "합성 유동장에 의존한 조건부 시나리오입니다. 실제 예보가 아닙니다.",
                         "합성 사각 도메인입니다. 해안선·육지·수심을 반영하지 않으며 입자가 육상 위를 지날 수 있습니다."
                     ]
                 ),
+                *domain_warnings,
                 "공개 관측점 기반 프로토타입 감시격자입니다. 실제 취수구·안전계통 경계가 아닙니다.",
             ],
             run_id=run_id,
@@ -1210,7 +1495,21 @@ class DomainService:
                 run_id=run_id,
             )
 
-        grid = DomainGrid.from_fixture(self.synthetic_domain)
+        # A run that expanded its computation window carries its own grid, and its cell
+        # labels are only meaningful against that grid. Falling back to the requested
+        # domain would compare labels from two different origins.
+        grid = (
+            DomainGrid(
+                domain_id=artifact["grid"]["domain_id"],
+                lon_min=artifact["grid"]["lon_min"],
+                lon_max=artifact["grid"]["lon_max"],
+                lat_min=artifact["grid"]["lat_min"],
+                lat_max=artifact["grid"]["lat_max"],
+                spacing_deg=artifact["grid"]["spacing_deg"],
+            )
+            if artifact.get("grid")
+            else DomainGrid.from_fixture(self.synthetic_domain)
+        )
         zones_by_id = {zone["zone_id"]: zone for zone in artifact["zones"]}
         zone_results = []
         for zone_id in zone_ids:
