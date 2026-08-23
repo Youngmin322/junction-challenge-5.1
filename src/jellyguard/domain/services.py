@@ -388,8 +388,15 @@ class DomainService:
             "vector_count": len(vectors),
             "vectors": vectors,
             "public_message": (
-                "유향 규약은 수온 이류 부호검정으로 판정한 값이며 공급자 문서로 확인된 값이 "
-                "아닙니다."
+                "유향 규약은 수온 이류 부호검정으로 판정한 값이며, 이 API 자체의 공급자 "
+                "문서로 확인된 값은 아닙니다. 다만 국립해양조사원의 일반 관측 설명·업무규정과는 "
+                "일치합니다."
+                if ((check or {}).get("institutional_corroboration") or {}).get("status")
+                == "corroborated"
+                else (
+                    "유향 규약은 수온 이류 부호검정으로 판정한 값이며 공급자 문서로 확인된 값이 "
+                    "아닙니다."
+                )
             ),
         }
 

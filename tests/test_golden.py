@@ -17,7 +17,12 @@ def test_six_tool_offline_golden_digests(tmp_path):
         return f"{prefix}-GOLDEN-{counter:04d}"
 
     service = create_service(
-        Settings(_env_file=None, blob_root=tmp_path),
+        # cache_root defaults to ./runs/cache (relative to the process cwd), which is
+        # NOT tmp_path. Any stray live-fetch cache left in the real repo (from manual
+        # verification runs during development) would silently leak into this "offline"
+        # golden run and drift the digest -- pin it to tmp_path too so this test only ever
+        # sees the bundled fixtures.
+        Settings(_env_file=None, blob_root=tmp_path, cache_root=tmp_path / "cache"),
         clock=lambda: datetime(2026, 8, 23, tzinfo=UTC),
         new_id=new_id,
     )
