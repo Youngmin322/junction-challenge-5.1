@@ -9,7 +9,6 @@ type Message = { role: 'assistant' | 'user'; content: string };
 type ConnectionState = 'checking' | 'ready' | 'auth' | 'offline';
 type HealthResponse = { copilot?: string; mops?: string; jellyguard?: string };
 type CopilotResponse = { answer?: string; code?: string; error?: string };
-type Horizon = 3 | 6 | 12;
 
 const copilotApiBase = process.env.NEXT_PUBLIC_COPILOT_API_BASE ?? 'http://localhost:3001';
 
@@ -117,86 +116,25 @@ function Tag({ children, tone = 'default' }: { children: React.ReactNode; tone?:
   return <span className={`mops-tag mops-tag--${tone}`}>{children}</span>;
 }
 
-function WatchCell({ className, label, code }: { className: string; label: string; code: string }) {
-  return (
-    <div className={`watch-cell ${className}`}>
-      <Image alt="" height={10} src={assets.watchCellDot} width={10} />
-      <span><strong>{label}</strong><small>{code}</small></span>
-    </div>
-  );
-}
-
-function MonitoringMap({ selectedHorizon, onSelectHorizon }: {
-  selectedHorizon: Horizon;
-  onSelectHorizon: (horizon: Horizon) => void;
-}) {
-  const fixture = dashboardFixture;
-
+function MonitoringMap() {
   return (
     <section className="panel map-panel" aria-labelledby="map-title">
       <header className="panel-header map-header">
-        <div><h2 id="map-title">한울 공개 감시 화면</h2><p>최근 확보 관측 · 합성 {selectedHorizon}h 이동영역</p></div>
+        <div><h2 id="map-title">한울원전 조건부 접근 우선순위 지도</h2><p>해파리 밀집 관측과 Risk Zone 상세 지도</p></div>
         <div className="layer-legend" aria-label="지도 레이어 범례">
-          <span><i className="legend-dot violet" />최근 관측</span>
-          <span><i className="legend-square blue" />보고서</span>
-          <span><i className="legend-dot cyan" />ROMS 상태</span>
-          <span><i className="legend-square orange" />SYNTHETIC {selectedHorizon}h</span>
-          <span><i className="legend-square rose" />감시격자</span>
+          <span><i className="legend-dot violet" />해파리 밀집</span>
+          <span><i className="legend-square orange" />Risk Zone</span>
+          <span><i className="legend-dot cyan" />감시격자</span>
+          <span><i className="legend-square rose" />감시선</span>
         </div>
       </header>
 
       <div className="map-canvas">
-        <Image alt="추상화된 한울 주변 공개 감시 지도" className="map-basemap" fill priority sizes="(max-width: 980px) 100vw, 920px" src={assets.basemap} />
-        <div className="synthetic-domain" aria-label="합성 도메인"><Image alt="" fill sizes="570px" src={assets.domain} /></div>
-        <Tag tone="orange">SYNTH_DOMAIN_HANUL_v1 · 지형 미반영</Tag>
-
-        {dashboardFixture.transport.horizons.map((horizon) => (
-          <button
-            aria-label={`${horizon}시간 합성 이동영역 선택`}
-            className={`envelope envelope--${horizon} ${selectedHorizon === horizon ? 'is-selected' : ''}`}
-            key={horizon}
-            onClick={() => onSelectHorizon(horizon)}
-            type="button"
-          >
-            <Image
-              alt={`${horizon}시간 합성 이동영역`}
-              fill
-              sizes={horizon === 12 ? '258px' : horizon === 6 ? '170px' : '92px'}
-              src={horizon === 12 ? assets.envelope12 : horizon === 6 ? assets.envelope6 : assets.envelope3}
-            />
-            <span>{horizon}h{horizon === 12 ? ' · SYNTHETIC' : ''}</span>
-          </button>
-        ))}
-
-        <div className="map-info-card report-card"><strong>보고서 맥락 · 좌표 없음</strong><span>NIFS 주간보고 fixture</span></div>
-        <div className="map-info-card roms-card"><strong>ROMS 면 field · {fixture.romsField.status}</strong><span>표시할 실측 면 field 없음 · vector 없음</span></div>
-
-        <WatchCell className="watch-cell--onyang" code="ONYANG" label="감시격자 온양" />
-        <WatchCell className="watch-cell--deokcheon" code="DEOKCHEON" label="감시격자 덕천" />
-        <WatchCell className="watch-cell--nagok" code="NAGOK" label="감시격자 나곡" />
-
-        <div className="observation-marker">
-          <span className="observation-card"><strong>가장 최근 확보 관측 · 데모 기준</strong><small>{fixture.observation.observedAt} · CACHED · 실시간 아님</small></span>
-          <span className="marker-ring">
-            <Image alt="" fill sizes="22px" src={assets.observationRing} />
-            <Image alt="" className="marker-dot" height={8} src={assets.observationDot} width={8} />
-          </span>
-        </div>
-
-        <div className="transport-card">
-          <strong>SYNTHETIC · {selectedHorizon}h 이동영역</strong>
-          <span>{fixture.transport.scenario} · {fixture.transport.members} members</span>
-          <small>실제 예보 아님 · watch-cell {fixture.intersection.sensitivity}</small>
-        </div>
-
-        <div className="intersection-strip" title={`${fixture.intersection.watchCellId} watch-cell polygon intersection`}>
-          fixture · watch-cell · 나곡 {fixture.intersection.members} of {fixture.intersection.totalMembers} · 최초 교차 {fixture.intersection.firstWindow} · {fixture.intersection.sensitivity}
-        </div>
+        <iframe className="risk-zone-frame" src="http://localhost:5173/" title="한울원전 조건부 접근 우선순위 지도" />
       </div>
 
       <footer className="map-disclaimer">
-        <Image alt="주의" height={16} src={assets.alert} width={16} />
-        <p><strong>합성 유동장에 의존한 조건부 시나리오이며 실제 예보가 아닙니다.</strong> 해안선·육지·수심을 반영하지 않습니다.<br />공개 관측점 기반 프로토타입 감시격자이며 실제 취수구·안전계통 경계가 아닙니다.</p>
+        <p><strong>Risk Zone은 해파리 밀집 관측과 같은 좌표계에 표시한 조건부 접근영역입니다.</strong> 실제 막힘 확률이나 시설 위험도를 뜻하지 않습니다.<br />관측은 CACHED, 이동영역은 SYNTHETIC 시나리오입니다.</p>
       </footer>
     </section>
   );
@@ -325,7 +263,6 @@ function ProvenancePanel({ panelRef }: { panelRef: React.RefObject<HTMLElement |
 }
 
 export default function Home() {
-  const [selectedHorizon, setSelectedHorizon] = useState<Horizon>(12);
   const [copilotState, setCopilotState] = useState<ConnectionState>('checking');
   const [backendState, setBackendState] = useState<ConnectionState>('checking');
   const provenanceRef = useRef<HTMLElement>(null);
@@ -360,7 +297,7 @@ export default function Home() {
           <div className="status-actions"><Tag tone="cached">CACHED 관측</Tag><Tag tone="live">LIVE 조건부 · Gate</Tag><Tag tone="synthetic">SYNTHETIC 사용</Tag><button onClick={showContractDetails} type="button">계약 상태 보기</button></div>
         </section>
 
-        <div className="primary-grid"><MonitoringMap onSelectHorizon={setSelectedHorizon} selectedHorizon={selectedHorizon} /><CopilotPanel state={copilotState} /></div>
+        <div className="primary-grid"><MonitoringMap /><CopilotPanel state={copilotState} /></div>
         <div className="secondary-grid"><EvidenceGrid /><ProvenancePanel panelRef={provenanceRef} /></div>
 
         <footer className="runtime-footer">
