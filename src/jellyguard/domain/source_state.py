@@ -195,13 +195,29 @@ class PublicDataClient:
         # particle with no neighbours. And the computation window expands by 25% per
         # attempt when particles leave it, which the field footprint has to allow for —
         # otherwise expansion stops immediately at `field_footprint_limit`.
-        "ymin": 36.90,
-        "ymax": 37.21,
-        "xmin": 129.30,
-        "xmax": 129.57,
+        #
+        # Sized from a live measurement, not a guess: 10,858 ROMS samples around Hanul
+        # gave a mean surface speed of 0.243 m/s (max 0.71, p90 0.4) which integrates to a
+        # mean +12h displacement of ~10.5 km and a max of ~30.7 km. The previous bbox
+        # covered only ~31 km (lat) x ~17 km (lon) -- narrower than that max displacement,
+        # so +12h expansion hit the field's own footprint before it could grow enough
+        # (`expansion_attempt_cap`, stuck at a 92% exit fraction). This bbox was verified
+        # live to cover roughly +/-43 km lat and +18/+44 km lon (west is coastline-limited,
+        # not a request limit -- water simply does not extend further that way) around
+        # Hanul, i.e. >=1.4x the measured max +12h displacement in every direction water
+        # actually exists, and drove a live run_transport([3, 6, 12]) to READY.
+        "ymin": 36.65,
+        "ymax": 37.45,
+        "xmin": 129.15,
+        "xmax": 129.93,
     }
     ROMS_PAGE_SIZE = 300
-    ROMS_MAX_PAGES = 60
+    # The provider caps numOfRows at 300 (larger values return INVALID_REQUEST_PARAMETER_ERROR),
+    # so a wider bbox means more pages, not bigger ones. The widened bbox above paged out at
+    # ~300 pages live; this cap and `live_budget_s` (config/settings.py) both carry margin
+    # above that measured cost so a genuine shortfall reports `partial: True` instead of
+    # silently truncating.
+    ROMS_MAX_PAGES = 400
 
     def __init__(self, settings: Settings, clock: Callable[[], datetime]) -> None:
         self.settings = settings
