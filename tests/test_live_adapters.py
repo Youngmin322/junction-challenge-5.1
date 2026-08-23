@@ -256,8 +256,8 @@ def test_khoa_roms_pages_until_total_count_and_summarizes_grid(tmp_path, monkeyp
     def handler(request):
         params = request.url.params
         assert params["type"] == "json"
-        assert float(params["ymin"]) == 36.90
-        assert float(params["xmax"]) == 129.57
+        assert float(params["ymin"]) == 36.65
+        assert float(params["xmax"]) == 129.93
         page_no = int(params["pageNo"])
         chunk = rows[(page_no - 1) * page_size : page_no * page_size]
         return httpx.Response(

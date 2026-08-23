@@ -28,8 +28,11 @@ class Settings(BaseSettings):
     http_read_timeout_s: float = 8.0
     # ROMS returns a (grid point x forecast hour) product, so one Hanul fetch is tens of
     # paged requests. A 12 s budget truncated it mid-grid and a truncated read leaves a
-    # coverage hole, not a thinner sample.
-    live_budget_s: float = 40.0
+    # coverage hole, not a thinner sample. The bbox widened for +12h transport coverage
+    # (see ROMS_HANUL_BBOX) pages out to ~300 requests and measured ~70-75 s live; 110 s
+    # keeps comfortable margin above that so a genuine shortfall still reports `partial`
+    # instead of racing the clock.
+    live_budget_s: float = 110.0
     dashboard_dist: Path = Path("./dashboard/dist")
     enable_local_docs: bool = False
     local_dashboard_origins: str = "http://127.0.0.1:5173,http://localhost:5173"
