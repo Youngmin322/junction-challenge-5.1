@@ -133,25 +133,24 @@ const toolTrace = [
 
 const evidenceCards = [
   {
-    code: 'OBS', title: '직접관측 · 데모 기준', claim: 'direct_observation',
-    lines: ['1건 · 2019-07-11', 'latest_cluster 지정'], footer: 'CACHED · 실시간 아님',
-    invariant: '후보 1 · 반환 1 · 중복 0', tone: 'violet', state: 'READY',
+    code: 'OBS', title: '직접관측', status: 'READY · CACHED · 1건',
+    lines: ['OBS · 2019-07-11', 'CACHED · 실시간 아님'], tone: 'violet',
   },
   {
-    code: 'DOC', title: '보고서 catalog', claim: 'context/report_catalog',
-    lines: ['좌표 없는 주간보고 맥락'], footer: 'CACHED · context only', tone: 'blue', state: 'READY',
+    code: 'DOC', title: '보고서 catalog', status: 'READY · CACHED · context',
+    lines: ['DOC · 좌표 없는 주간보고 맥락'], tone: 'blue',
   },
   {
-    code: 'HB', title: '점 관측 · HB / HF', claim: 'context / distant_reference',
-    lines: ['HB 3 · 근해 context', 'HF 13 · 원거리 reference'], footer: 'HF ≠ 한울 field', tone: 'cyan', state: 'READY',
+    code: 'HB', title: '점 관측 · HB / HF', status: 'READY · CACHED · context',
+    lines: ['HB 3 · HF 13 · HF ≠ 한울 field'], tone: 'cyan',
   },
   {
-    code: 'SCN', title: '조건부 시나리오', claim: 'conditional_scenario',
-    lines: ['B2 · 3/6/12h', '나곡 6 of 25'], footer: 'SYNTHETIC · fixture', tone: 'orange', state: 'READY',
+    code: 'SCN', title: '조건부 시나리오', status: 'READY · SYNTHETIC',
+    lines: ['SCN · 나곡 6 of 25', '최초 교차 6–12h'], tone: 'orange',
   },
   {
-    code: '!', title: 'ROMS field 상태', claim: 'diagnostic',
-    lines: ['현재 · NO_FIELD', 'BLOCKED · DOMAIN_INSUFFICIENT'], footer: '표시할 실측 면 field 없음', tone: 'muted', state: 'NO_FIELD',
+    code: '!', title: 'ROMS field 상태', status: 'NO_FIELD · BLOCKED',
+    lines: ['실측 면 field 없음'], tone: 'muted',
   },
 ] as const;
 
@@ -244,13 +243,9 @@ function MonitoringMap({ selectedHorizon, onSelectHorizon, plant, unit, onSelect
               <small>실제 예보 아님 · watch-cell {fixture.intersection.sensitivity}</small>
             </div>
 
-            <div className="selected-intake-view" aria-live="polite">
+            <div className="sr-only" aria-live="polite">
               <strong>{unit.label} · 취수구 지도</strong>
               <span>프로토타입 감시 뷰 · 실제 취수구 기하 미사용</span>
-            </div>
-
-            <div className="intersection-strip" title={`${fixture.intersection.watchCellId} watch-cell polygon intersection`}>
-              fixture · watch-cell · 나곡 {fixture.intersection.members} of {fixture.intersection.totalMembers} · 최초 교차 {fixture.intersection.firstWindow} · {fixture.intersection.sensitivity}
             </div>
           </>
         ) : (
@@ -265,6 +260,7 @@ function MonitoringMap({ selectedHorizon, onSelectHorizon, plant, unit, onSelect
       <footer className="map-disclaimer">
         <Image alt="주의" height={16} src={assets.alert} width={16} />
         <p>{isHanul ? <><strong>합성 유동장에 의존한 조건부 시나리오이며 실제 예보가 아닙니다.</strong> 해안선·육지·수심을 반영하지 않습니다.<br />공개 관측점 기반 프로토타입 감시격자이며 실제 취수구·안전계통 경계가 아닙니다.</> : <><strong>{plant.label} 자료 연결 전입니다.</strong> 데이터가 없다는 사실을 안전 또는 저위험으로 해석하지 않습니다.</>}</p>
+        {isHanul && <div className="intersection-strip" title={`${fixture.intersection.watchCellId} watch-cell polygon intersection`}>fixture · watch-cell · 나곡 {fixture.intersection.members} of {fixture.intersection.totalMembers} · 최초 교차 {fixture.intersection.firstWindow} · {fixture.intersection.sensitivity}</div>}
       </footer>
     </section>
   );
@@ -347,7 +343,7 @@ function CopilotPanel({ state, selectedHorizon, onSelectHorizon }: {
       <section className="run-summary">
         <header><strong>표층조건부 이동 · SYNTHETIC READY</strong><span>READY</span></header>
         <p>{dashboardFixture.transport.scenario} · 3/6/12h · {dashboardFixture.transport.members} members</p>
-        <small>fixture · watch-cell core · 나곡 {dashboardFixture.intersection.members} of {dashboardFixture.intersection.totalMembers}<br />최초 교차 {dashboardFixture.intersection.firstWindow} · 실제 예보 아님</small>
+        <small>fixture · watch-cell core · 나곡 {dashboardFixture.intersection.members} of {dashboardFixture.intersection.totalMembers} · 최초 교차 {dashboardFixture.intersection.firstWindow} · 실제 예보 아님</small>
         <div className="run-summary-controls">
           <div className="horizon-pills" aria-label="합성 이동영역 시간 선택">
             {dashboardFixture.transport.horizons.map((horizon) => (
@@ -364,19 +360,17 @@ function CopilotPanel({ state, selectedHorizon, onSelectHorizon }: {
 function EvidenceGrid() {
   return (
     <section className="panel evidence-panel" aria-labelledby="evidence-title">
-      <header className="evidence-heading"><h2 id="evidence-title">이어보기 · 증거층 탐색</h2><p>직접관측 · 보고서 catalog/context · 점 해양관측 · 조건부 시나리오 · 자료부족</p></header>
+      <header className="evidence-heading"><h2 id="evidence-title">이어보기 · 증거층 탐색</h2></header>
       <div className="evidence-grid">
         {evidenceCards.map((card) => (
           <article className={`evidence-card evidence-card--${card.tone}`} key={card.code}>
             <div className="evidence-cover">
-              <span className="evidence-orb" aria-hidden="true">{card.code}</span>
-              <strong>{card.state}</strong>
+              <span aria-hidden="true">{card.code}</span>
             </div>
             <div className="evidence-progress" aria-hidden="true" />
             <div className="evidence-body">
-              <h3>{card.title}</h3><code>{card.claim}</code>
+              <h3>{card.title}</h3><strong>{card.status}</strong>
               <p>{card.lines.map((line) => <span key={line}>{line}</span>)}</p>
-              <small>{card.footer}</small>{'invariant' in card && <em>{card.invariant}</em>}
             </div>
           </article>
         ))}
