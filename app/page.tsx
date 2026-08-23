@@ -188,11 +188,6 @@ function MonitoringMap({ plant, unit, onSelectUnit }: {
         {isHanul ? (
           <>
             <iframe className="risk-zone-frame" src="http://localhost:5173/" title="한울원전 조건부 접근 우선순위 지도" />
-
-            <div className="selected-intake-view" aria-live="polite">
-              <strong>{unit.label} · 취수구 지도</strong>
-              <span>프로토타입 감시 뷰 · 실제 취수구 기하 미사용</span>
-            </div>
           </>
         ) : (
           <Image alt={`${plant.label} 취수구 주변 프로토타입 지도`} className="map-basemap" fill priority sizes="(max-width: 980px) 100vw, 920px" src={assets.basemap} />
@@ -206,10 +201,12 @@ function MonitoringMap({ plant, unit, onSelectUnit }: {
         )}
       </div>
 
-      <footer className="map-disclaimer">
-        <Image alt="주의" height={16} src={assets.alert} width={16} />
-        <p>{isHanul ? <><strong>합성 유동장에 의존한 조건부 시나리오이며 실제 예보가 아닙니다.</strong> 해안선·육지·수심을 반영하지 않습니다.<br />공개 관측점 기반 프로토타입 감시격자이며 실제 취수구·안전계통 경계가 아닙니다.</> : <><strong>{plant.label} 자료 연결 전입니다.</strong> 데이터가 없다는 사실을 안전 또는 저위험으로 해석하지 않습니다.</>}</p>
-      </footer>
+      {!isHanul && (
+        <footer className="map-disclaimer">
+          <Image alt="주의" height={16} src={assets.alert} width={16} />
+          <p><strong>{plant.label} 자료 연결 전입니다.</strong> 데이터가 없다는 사실을 안전 또는 저위험으로 해석하지 않습니다.</p>
+        </footer>
+      )}
     </section>
   );
 }
