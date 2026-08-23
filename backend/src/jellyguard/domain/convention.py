@@ -14,6 +14,14 @@ Flipping the convention flips the sign of ``u`` and ``v``, and therefore the sig
 correlation between the observed temperature tendency and the advective term. Only one
 reading can correlate positively, which makes this a discriminating test rather than a
 plausibility argument.
+
+Two KHOA-published documents state the institution's general current-direction
+convention (not this specific API's field, which stays undocumented): the agency's own
+"해양관측" overview page, and Article 5 of its 해양관측 업무규정 (Ocean Observation Work
+Regulation). Both say current direction is TOWARD. This is corroboration, not a
+substitute for the check -- it is recorded separately as ``institutional_corroboration``
+and never flips ``provider_documented``, which stays about this specific API's own
+spec sheet, which still says nothing.
 """
 
 from __future__ import annotations
@@ -28,6 +36,27 @@ INCONCLUSIVE = "INCONCLUSIVE"
 
 MIN_SAMPLES = 200
 MIN_ABS_CORRELATION = 0.15
+
+# KHOA's general convention for current direction, per two independent institutional
+# documents (not this API's own spec, which remains silent -- see module docstring).
+# This is fixed regardless of what any single fetch measures: if a check ever disagrees
+# with it, that is a conflict worth surfacing, not something this constant should chase.
+KHOA_INSTITUTIONAL_CONVENTION = TOWARD
+KHOA_INSTITUTIONAL_CITATIONS = (
+    {
+        "title": "국립해양조사원 업무소개 - 해양관측",
+        "url": "https://www.khoa.go.kr/kcom/cnt/selectContentsPage.do?cntId=25402000",
+        "quote": (
+            "해류에서 유향이 북동류라는 것은 남서쪽에서 북동쪽으로 흐른다는 의미이나, "
+            "바람에서 풍향이 북동풍은 북동쪽에서 불어온다는 의미"
+        ),
+    },
+    {
+        "title": "해양관측 업무규정 제5조(해양관측기준)",
+        "url": "https://www.ulex.co.kr/%EB%B2%95%EB%A5%A0/2100000067629-2082328-%ED%95%B4%EC%96%91",
+        "quote": "유향/파향 0°는 북쪽으로 진행을 의미",
+    },
+)
 
 METERS_PER_DEGREE_LAT = 110_540.0
 METERS_PER_DEGREE_LON_EQUATOR = 111_320.0
@@ -82,6 +111,7 @@ def verify_flow_direction_convention(rows: list[dict[str, Any]]) -> dict[str, An
         ),
         "provider_documented": False,
         "basis": "check_based_provider_unconfirmed" if verdict != INCONCLUSIVE else "none",
+        "institutional_corroboration": _institutional_corroboration(verdict),
     }
 
 
@@ -91,6 +121,27 @@ def _verdict(correlation: float | None, sample_size: int) -> str:
     if abs(correlation) < MIN_ABS_CORRELATION:
         return INCONCLUSIVE
     return TOWARD if correlation > 0 else FROM
+
+
+def _institutional_corroboration(verdict: str) -> dict[str, Any]:
+    """Compare this fetch's data-driven verdict against KHOA's stated general convention.
+
+    A match is corroboration, not proof -- it still is not this API's own spec sheet. A
+    mismatch would mean the check and the institution's own documents disagree, which is
+    worth a visible flag rather than quietly trusting either one.
+    """
+    if verdict == INCONCLUSIVE:
+        return {
+            "status": "not_applicable",
+            "institutional_convention": KHOA_INSTITUTIONAL_CONVENTION,
+            "citations": list(KHOA_INSTITUTIONAL_CITATIONS),
+        }
+    status = "corroborated" if verdict == KHOA_INSTITUTIONAL_CONVENTION else "conflicting"
+    return {
+        "status": status,
+        "institutional_convention": KHOA_INSTITUTIONAL_CONVENTION,
+        "citations": list(KHOA_INSTITUTIONAL_CITATIONS),
+    }
 
 
 def _index_cells(rows: list[dict[str, Any]]) -> dict[tuple[float, float], dict[str, tuple]]:
@@ -200,4 +251,3 @@ def _correlation(left: list[float], right: list[float]) -> float | None:
         sum((a - left_mean) ** 2 for a in left) * sum((b - right_mean) ** 2 for b in right)
     )
     return numerator / denominator if denominator else None
-

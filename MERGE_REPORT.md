@@ -18,7 +18,7 @@
 | `feat/nuclear-intake-risk-zone` | `ee45571` | 조건부 이동영역 계산, 지도 데모, 시나리오·설계 문서 |
 | `feat/connect-risk-zone-mcp` | `860648b` | TypeScript 위험영역 엔진을 JellyGuard MCP 수송 경로에 연결 |
 | `feat/copilot-connecting` | `96c9d63` | 웹 앱, Copilot SDK 서버, 채팅 최신 메시지 스크롤 |
-| `feat/mcp-agent-orchestrator` | `15d47c2` | ROMS 실측장, 유향 판정, 실측 수송, 계산영역 자동 확장, 표층 벡터, HF 관측소 참고점, 최신 확보 관측 지정 |
+| `feat/mcp-agent-orchestrator` | `a80abfc` | ROMS 실측장, 유향 판정·공식문서 대조, 실측 수송, 계산영역 자동 확장, 표층 벡터, HF 관측소 참고점, 최신 확보 관측 지정 |
 | `main` | `6c3eb3f` | MOPS 명칭과 최신 통합 README |
 | `integration/all-features` | `b480e66` | 기존 모노레포 통합, MCP 검증 보강, 인증값 로그 노출 차단 |
 
@@ -40,8 +40,8 @@
 - 웹 lint 및 production build: 통과
 - `packages/risk-zone`: 46개 테스트 통과
 - `engines/risk-zone`: 42개 테스트 통과
-- Python 백엔드: 211개 테스트 통과
-- 전체 자동 테스트: 299개 통과
+- Python 백엔드: 215개 테스트 통과
+- 전체 자동 테스트: 303개 통과
 - Python Ruff 검사: 통과
 - `npm audit --omit=dev`: 운영 의존성 취약점 0건
 

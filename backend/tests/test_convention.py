@@ -66,3 +66,30 @@ def test_uniform_temperature_field_cannot_decide_and_says_so():
     result = verify_flow_direction_convention(rows)
     assert result["verdict"] == INCONCLUSIVE
 
+
+def test_toward_verdict_is_corroborated_by_khoa_institutional_documents():
+    result = verify_flow_direction_convention(_rows(flip=False))
+    corroboration = result["institutional_corroboration"]
+    assert corroboration["status"] == "corroborated"
+    assert corroboration["institutional_convention"] == TOWARD
+    assert len(corroboration["citations"]) == 2
+    assert all("url" in c and "quote" in c for c in corroboration["citations"])
+
+
+def test_from_verdict_conflicts_with_khoa_institutional_documents():
+    result = verify_flow_direction_convention(_rows(flip=True))
+    corroboration = result["institutional_corroboration"]
+    assert corroboration["status"] == "conflicting"
+
+
+def test_inconclusive_verdict_has_no_applicable_corroboration():
+    rows = _rows(flip=False)[:60]
+    result = verify_flow_direction_convention(rows)
+    assert result["institutional_corroboration"]["status"] == "not_applicable"
+
+
+def test_institutional_corroboration_never_flips_provider_documented():
+    """Institutional docs are not this API's spec sheet."""
+    result = verify_flow_direction_convention(_rows(flip=False))
+    assert result["institutional_corroboration"]["status"] == "corroborated"
+    assert result["provider_documented"] is False

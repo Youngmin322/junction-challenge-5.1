@@ -17,7 +17,7 @@ def test_six_tool_offline_golden_digests(tmp_path):
         return f"{prefix}-GOLDEN-{counter:04d}"
 
     service = create_service(
-        Settings(_env_file=None, blob_root=tmp_path),
+        Settings(_env_file=None, blob_root=tmp_path, cache_root=tmp_path / "cache"),
         clock=lambda: datetime(2026, 8, 23, tzinfo=UTC),
         new_id=new_id,
     )
