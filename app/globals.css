@@ -462,6 +462,22 @@ button { color: inherit; cursor: pointer; }
 .transport-card strong { color: #fff; font-size: 14px; }
 .transport-card span { margin-top: 8px; color: #d8d8d8; font-size: 10px; }
 .transport-card small { margin-top: 4px; color: var(--muted); font-size: 9px; }
+.selected-intake-view {
+  position: absolute;
+  z-index: 7;
+  left: 2.6%;
+  bottom: 3.3%;
+  min-width: 238px;
+  min-height: 34px;
+  border-left: 3px solid var(--accent);
+  border-radius: 2px;
+  padding: 5px 9px;
+  background: rgba(31, 31, 31, .92);
+}
+.selected-intake-view strong,
+.selected-intake-view span { display: block; }
+.selected-intake-view strong { font-size: 9px; font-weight: 700; }
+.selected-intake-view span { margin-top: 3px; color: var(--muted); font-size: 7px; }
 .map-canvas.is-unavailable .map-basemap { filter: grayscale(1) brightness(.28); }
 .unavailable-map-state {
   position: absolute;
