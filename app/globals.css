@@ -317,6 +317,15 @@ button { color: inherit; cursor: pointer; }
   filter: saturate(.25) brightness(.66) contrast(1.05);
   transition: object-position 180ms ease, transform 180ms ease;
 }
+.risk-zone-frame {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #0d1821;
+}
 .unit-view--north .map-basemap { object-position: 50% 36%; }
 .unit-view--central .map-basemap { object-position: 50% 48%; transform: scale(1.015); }
 .unit-view--south .map-basemap { object-position: 50% 64%; transform: scale(1.025); }
@@ -938,6 +947,7 @@ button { color: inherit; cursor: pointer; }
   .status-actions { width: 100%; overflow-x: auto; }
   .map-panel { height: auto; grid-template-rows: auto minmax(430px, 65vh) auto; }
   .map-header { min-height: 92px; align-items: flex-start; flex-direction: column; padding: 12px 12px 10px 20px; }
+  .map-canvas { min-height: 0; }
   .layer-legend { width: 100%; gap: 12px; overflow-x: auto; padding-bottom: 3px; }
   .map-canvas > .mops-tag { left: 18%; }
   .transport-card { left: 24%; width: 50%; }

@@ -158,23 +158,11 @@ function Tag({ children, tone = 'default' }: { children: React.ReactNode; tone?:
   return <span className={`mops-tag mops-tag--${tone}`}>{children}</span>;
 }
 
-function WatchCell({ className, label, code }: { className: string; label: string; code: string }) {
-  return (
-    <div className={`watch-cell ${className}`}>
-      <Image alt="" height={10} src={assets.watchCellDot} width={10} />
-      <span><strong>{label}</strong><small>{code}</small></span>
-    </div>
-  );
-}
-
-function MonitoringMap({ selectedHorizon, onSelectHorizon, plant, unit, onSelectUnit }: {
-  selectedHorizon: Horizon;
-  onSelectHorizon: (horizon: Horizon) => void;
+function MonitoringMap({ plant, unit, onSelectUnit }: {
   plant: PlantOption;
   unit: UnitView;
   onSelectUnit: (unitId: string) => void;
 }) {
-  const fixture = dashboardFixture;
   const isHanul = plant.id === 'hanul';
 
   return (
@@ -197,62 +185,19 @@ function MonitoringMap({ selectedHorizon, onSelectHorizon, plant, unit, onSelect
       </header>
 
       <div className={`map-canvas unit-view--${unit.focus} ${isHanul ? '' : 'is-unavailable'}`}>
-        <Image alt={`${plant.label} 취수구 주변 프로토타입 지도`} className="map-basemap" fill priority sizes="(max-width: 980px) 100vw, 920px" src={assets.basemap} />
-
         {isHanul ? (
           <>
-            <div className="synthetic-domain" aria-label="합성 도메인"><Image alt="" fill sizes="570px" src={assets.domain} /></div>
-            <Tag tone="orange">SYNTH_DOMAIN_HANUL_v1 · 지형 미반영</Tag>
-
-            {dashboardFixture.transport.horizons.map((horizon) => (
-              <button
-                aria-label={`${horizon}시간 합성 이동영역 선택`}
-                className={`envelope envelope--${horizon} ${selectedHorizon === horizon ? 'is-selected' : ''}`}
-                key={horizon}
-                onClick={() => onSelectHorizon(horizon)}
-                type="button"
-              >
-                <Image
-                  alt={`${horizon}시간 합성 이동영역`}
-                  fill
-                  sizes={horizon === 12 ? '258px' : horizon === 6 ? '170px' : '92px'}
-                  src={horizon === 12 ? assets.envelope12 : horizon === 6 ? assets.envelope6 : assets.envelope3}
-                />
-                <span>{horizon}h{horizon === 12 ? ' · SYNTHETIC' : ''}</span>
-              </button>
-            ))}
-
-            <div className="map-info-card report-card"><strong>보고서 맥락 · 좌표 없음</strong><span>NIFS 주간보고 fixture</span></div>
-            <div className="map-info-card roms-card"><strong>ROMS 면 field · {fixture.romsField.status}</strong><span>표시할 실측 면 field 없음 · vector 없음</span></div>
-
-            <WatchCell className="watch-cell--onyang" code="ONYANG" label="감시격자 온양" />
-            <WatchCell className="watch-cell--deokcheon" code="DEOKCHEON" label="감시격자 덕천" />
-            <WatchCell className="watch-cell--nagok" code="NAGOK" label="감시격자 나곡" />
-
-            <div className="observation-marker">
-              <span className="observation-card"><strong>가장 최근 확보 관측 · 데모 기준</strong><small>{fixture.observation.observedAt} · CACHED · 실시간 아님</small></span>
-              <span className="marker-ring">
-                <Image alt="" fill sizes="22px" src={assets.observationRing} />
-                <Image alt="" className="marker-dot" height={8} src={assets.observationDot} width={8} />
-              </span>
-            </div>
-
-            <div className="transport-card">
-              <strong>SYNTHETIC · {selectedHorizon}h 이동영역</strong>
-              <span>{fixture.transport.scenario} · {fixture.transport.members} members</span>
-              <small>실제 예보 아님 · watch-cell {fixture.intersection.sensitivity}</small>
-            </div>
+            <iframe className="risk-zone-frame" src="http://localhost:5173/" title="한울원전 조건부 접근 우선순위 지도" />
 
             <div className="selected-intake-view" aria-live="polite">
               <strong>{unit.label} · 취수구 지도</strong>
               <span>프로토타입 감시 뷰 · 실제 취수구 기하 미사용</span>
             </div>
-
-            <div className="intersection-strip" title={`${fixture.intersection.watchCellId} watch-cell polygon intersection`}>
-              fixture · watch-cell · 나곡 {fixture.intersection.members} of {fixture.intersection.totalMembers} · 최초 교차 {fixture.intersection.firstWindow} · {fixture.intersection.sensitivity}
-            </div>
           </>
         ) : (
+          <Image alt={`${plant.label} 취수구 주변 프로토타입 지도`} className="map-basemap" fill priority sizes="(max-width: 980px) 100vw, 920px" src={assets.basemap} />
+        )}
+        {!isHanul && (
           <div className="unavailable-map-state" role="status">
             <span>DATA NOT CONNECTED</span>
             <strong>{unit.label} 취수구 지도</strong>
@@ -480,7 +425,7 @@ export default function Home() {
           <div className="status-actions"><Tag tone="cached">{selectedPlant.connected ? 'CACHED 사용' : 'CACHED 미연결'}</Tag><Tag tone="live">{selectedPlant.connected ? 'LIVE 조건부 · GATE' : 'LIVE 미연결'}</Tag><Tag tone="synthetic">{selectedPlant.connected ? 'SYNTHETIC 사용' : 'SYNTHETIC 미허용'}</Tag></div>
         </section>
 
-        <div className="primary-grid"><MonitoringMap onSelectHorizon={setSelectedHorizon} onSelectUnit={setSelectedUnitId} plant={selectedPlant} selectedHorizon={selectedHorizon} unit={selectedUnit} /><CopilotPanel onSelectHorizon={setSelectedHorizon} selectedHorizon={selectedHorizon} state={copilotState} /></div>
+        <div className="primary-grid"><MonitoringMap onSelectUnit={setSelectedUnitId} plant={selectedPlant} unit={selectedUnit} /><CopilotPanel onSelectHorizon={setSelectedHorizon} selectedHorizon={selectedHorizon} state={copilotState} /></div>
         <div className="secondary-grid"><EvidenceGrid /><ProvenancePanel panelRef={provenanceRef} /></div>
 
         <footer className="runtime-footer">
