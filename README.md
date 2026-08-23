@@ -100,6 +100,8 @@ JELLYGUARD_LIVE_ENABLED_SOURCES=nifs_jelly_catalog,khoa_tw_recent_hanul,khoa_rom
 
 ## 데이터 소스와 사용 경계
 
+발표·질의응답용 전체 원장에는 API별 주요 변수, 실제 계산 사용 여부, 제외 이유와 인증키 취급을 정리했습니다: [MOPS 데이터셋·API 사용 원장](docs/data-sources-and-usage.md)
+
 | 소스 | 현재 역할 | 계산 사용 여부 |
 | --- | --- | --- |
 | `nifs_jelly_catalog` | NIFS 해파리 주간보고 게시물 목록 | 위치·밀도 관측으로 재해석하지 않음 |
