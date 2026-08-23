@@ -1,0 +1,21 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="920" height="480" viewBox="0 0 920 480" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Abstract basemap" clip-path="url(#clip0_0_109)">
+<g id="Group" opacity="0.55">
+<g id="Vector">
+<path d="M0 80H920ZM0 160H920ZM0 240H920ZM0 320H920ZM0 400H920Z" fill="black"/>
+<path d="M0 80H920M0 160H920M0 240H920M0 320H920M0 400H920" stroke="#16465A"/>
+</g>
+<g id="Vector_2">
+<path d="M115 0V480ZM230 0V480ZM345 0V480ZM460 0V480ZM575 0V480ZM690 0V480ZM805 0V480Z" fill="black"/>
+<path d="M115 0V480M230 0V480M345 0V480M460 0V480M575 0V480M690 0V480M805 0V480" stroke="#16465A"/>
+</g>
+</g>
+<path id="Vector_3" d="M0 0H185C220 45 188 86 227 126C255 156 215 192 246 227C274 260 236 297 271 338C296 368 279 417 313 480H0V0Z" fill="#153141"/>
+<path id="Vector_4" d="M185 0C220 45 188 86 227 126C255 156 215 192 246 227C274 260 236 297 271 338C296 368 279 417 313 480" stroke="#487082" stroke-width="2"/>
+</g>
+<defs>
+<clipPath id="clip0_0_109">
+<rect width="920" height="480" fill="white"/>
+</clipPath>
+</defs>
+</svg>
