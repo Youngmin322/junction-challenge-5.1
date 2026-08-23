@@ -2,6 +2,8 @@
 
 import Image from 'next/image';
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 type Message = { role: 'assistant' | 'user'; content: string };
 type ConnectionState = 'checking' | 'ready' | 'auth' | 'offline';
@@ -256,7 +258,11 @@ function CopilotPanel({ state }: { state: ConnectionState }) {
       <div className="quick-prompts">{quickPrompts.map((prompt) => <button key={prompt} onClick={() => void sendMessage(prompt)} type="button">{prompt}</button>)}</div>
 
       <div className="copilot-messages" ref={scrollRef} aria-live="polite">
-        {messages.map((message, index) => <p className={`copilot-message copilot-message--${message.role}`} key={`${message.role}-${index}`}>{message.content}</p>)}
+        {messages.map((message, index) => (
+          <div className={`copilot-message copilot-message--${message.role}`} key={`${message.role}-${index}`}>
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+          </div>
+        ))}
         {loading && <p className="copilot-message is-loading">MOPS 데이터 도구를 확인하고 있습니다…</p>}
       </div>
 

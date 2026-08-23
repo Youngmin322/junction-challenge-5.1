@@ -12,7 +12,6 @@ var RiskZoneValidationError = class extends Error {
     this.field = field;
     this.name = "RiskZoneValidationError";
   }
-  field;
 };
 function validateSimulationInput(input) {
   if (!input || typeof input !== "object") {
@@ -221,7 +220,6 @@ var GriddedFlowFieldProvider = class {
   constructor(samples) {
     this.samples = samples;
   }
-  samples;
   velocityAt(request) {
     const compatible = this.samples.filter((sample) => sample.depthMeters === request.depthMeters);
     if (compatible.length === 0) return null;
@@ -337,7 +335,6 @@ var CoastAndBathymetryProvider = class {
   constructor(options) {
     this.options = options;
   }
-  options;
   canTraverse(request) {
     const projection = createLocalProjection(request.from);
     const destination = projection.toLocal(request.to);

@@ -126,7 +126,20 @@ button { color: inherit; cursor: pointer; }
 .quick-prompts button { flex: 1 0 auto; min-height: 26px; border: 1px solid #285579; border-radius: 999px; padding: 4px 10px; background: #0e2a40; color: #9bb1c0; font-size: 8px; }
 .quick-prompts button:hover, .quick-prompts button:focus-visible { color: #e8f1f7; border-color: #60a5fa; outline: 0; }
 .copilot-messages { min-height: 72px; max-height: 110px; overflow: auto; }
-.copilot-message { margin: 0 0 6px; border: 1px solid #24465c; border-radius: 10px; padding: 10px 12px; background: #0d283d; color: #b8cad5; font-size: 9px; line-height: 1.5; white-space: pre-line; }
+.copilot-message { margin: 0 0 6px; border: 1px solid #24465c; border-radius: 10px; padding: 10px 12px; background: #0d283d; color: #b8cad5; font-size: 9px; line-height: 1.5; overflow-wrap: anywhere; }
+.copilot-message p { margin: 0 0 7px; }
+.copilot-message p:last-child { margin-bottom: 0; }
+.copilot-message h1, .copilot-message h2, .copilot-message h3 { margin: 0 0 7px; color: #f3f8fb; font-size: 1.05em; line-height: 1.35; }
+.copilot-message ul, .copilot-message ol { margin: 5px 0 7px; padding-left: 18px; }
+.copilot-message li { margin: 2px 0; }
+.copilot-message a { color: #8bd5ff; text-decoration: underline; }
+.copilot-message blockquote { margin: 6px 0; border-left: 2px solid #5b8ea6; padding-left: 9px; color: #d0e0e8; }
+.copilot-message code { border-radius: 3px; padding: 1px 4px; background: #173b50; color: #d7f1ff; font-size: .95em; }
+.copilot-message pre { margin: 7px 0; overflow-x: auto; border: 1px solid #28516a; border-radius: 5px; padding: 8px; background: #081d2b; }
+.copilot-message pre code { padding: 0; background: transparent; white-space: pre; }
+.copilot-message table { width: 100%; margin: 7px 0; border-collapse: collapse; font-size: .95em; }
+.copilot-message th, .copilot-message td { border: 1px solid #28516a; padding: 3px 5px; text-align: left; vertical-align: top; }
+.copilot-message th { color: #f3f8fb; background: #173b50; }
 .copilot-message--user { margin-left: 20%; border-color: #155e63; background: #0b3a3b; color: #d5f5ef; }
 .copilot-message.is-loading { color: #7dd3fc; animation: pulse 1.2s ease-in-out infinite; }
 .tool-trace { border: 1px solid #24465c; border-radius: 10px; padding: 10px 12px; background: #0b1d2d; }
