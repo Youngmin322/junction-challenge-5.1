@@ -1,0 +1,12 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Jelly monitoring mark" clip-path="url(#clip0_0_105)">
+<path id="Vector" d="M22 0H10C4.47715 0 0 4.47715 0 10V22C0 27.5228 4.47715 32 10 32H22C27.5228 32 32 27.5228 32 22V10C32 4.47715 27.5228 0 22 0Z" fill="#123A4A"/>
+<path id="Vector_2" d="M7 17C10 12 13 22 16 17C19 12 22 22 25 17" stroke="#22D3EE" stroke-width="2.4" stroke-linecap="round"/>
+<path id="Vector_3" d="M7 11C10 7 13 15 16 11C19 7 22 15 25 11" stroke="#60A5FA" stroke-width="1.8" stroke-linecap="round"/>
+</g>
+<defs>
+<clipPath id="clip0_0_105">
+<rect width="32" height="32" fill="white"/>
+</clipPath>
+</defs>
+</svg>

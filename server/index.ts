@@ -6,11 +6,14 @@ import { CopilotClient, defineTool } from '@github/copilot-sdk';
 
 const port = Number(process.env.COPILOT_API_PORT ?? 3001);
 const webOrigin = process.env.WEB_ORIGIN ?? 'http://localhost:3100';
-const jellyguardApiBase = (process.env.JELLYGUARD_API_BASE ?? 'http://127.0.0.1:8000').replace(/\/$/, '');
-const jellyguardRestKey = process.env.JELLYGUARD_LOCAL_REST_KEY?.trim() ?? '';
+// Compatibility: the Python package and deployed environment variables still
+// use the JellyGuard prefix. Keep those wire names until the backend migration,
+// while all new product-facing copy and health output use MOPS.
+const mopsApiBase = (process.env.JELLYGUARD_API_BASE ?? 'http://127.0.0.1:8000').replace(/\/$/, '');
+const mopsRestKey = process.env.JELLYGUARD_LOCAL_REST_KEY?.trim() ?? '';
 const credentialStatus = Object.freeze({
   copilotTokenConfigured: Boolean(process.env.COPILOT_GITHUB_TOKEN?.trim()),
-  jellyguardRestKeyConfigured: Boolean(jellyguardRestKey),
+  mopsRestKeyConfigured: Boolean(mopsRestKey),
   nifsJellyKeyConfigured: Boolean(process.env.JELLYGUARD_NIFS_JELLY_KEY?.trim()),
   khoaKeyConfigured: Boolean(process.env.JELLYGUARD_KHOA_KEY?.trim()),
 });
@@ -39,7 +42,7 @@ const datasets = {
   },
   risk_zone: {
     label: '취수구 접근영역',
-    source: 'JellyGuard 조건부 연결 계산',
+    source: 'MOPS 조건부 연결 계산',
     cadence: '시나리오 실행 시',
     connection: 'synthetic_ready',
     checks: ['합성·실자료 표시', '해류·수심 coverage 확인', '조건부 연결로 표기'],
@@ -48,13 +51,13 @@ const datasets = {
 
 type DatasetName = keyof typeof datasets;
 
-async function jellyguardGet(path: string) {
-  if (!jellyguardRestKey) throw new Error('JELLYGUARD_LOCAL_REST_KEY is not configured');
-  const response = await fetch(`${jellyguardApiBase}${path}`, {
-    headers: { 'x-jellyguard-local-key': jellyguardRestKey },
+async function mopsBackendGet(path: string) {
+  if (!mopsRestKey) throw new Error('MOPS backend REST key is not configured');
+  const response = await fetch(`${mopsApiBase}${path}`, {
+    headers: { 'x-jellyguard-local-key': mopsRestKey },
     signal: AbortSignal.timeout(5000),
   });
-  if (!response.ok) throw new Error(`JellyGuard responded with ${response.status}`);
+  if (!response.ok) throw new Error(`MOPS backend responded with ${response.status}`);
   return response.json();
 }
 
@@ -63,7 +66,7 @@ const listDatasets = defineTool('list_datasets', {
   parameters: { type: 'object', properties: {} },
   handler: async () => {
     try {
-      return await jellyguardGet('/v1/datasets');
+      return await mopsBackendGet('/v1/datasets');
     } catch {
       return {
         backend: 'offline',
@@ -88,7 +91,7 @@ const getDatasetStatus = defineTool('get_dataset_status', {
   },
   handler: async ({ datasetName }: { datasetName: DatasetName }) => {
     try {
-      return await jellyguardGet(`/v1/datasets/${datasetName}/status`);
+      return await mopsBackendGet(`/v1/datasets/${datasetName}/status`);
     } catch {
       return { id: datasetName, backend: 'offline', ...datasets[datasetName] };
     }
@@ -110,16 +113,16 @@ const checkDatasetQuality = defineTool('check_dataset_quality', {
   },
   handler: async ({ datasetName }: { datasetName: DatasetName }) => {
     try {
-      return await jellyguardGet(`/v1/datasets/${datasetName}/quality`);
+      return await mopsBackendGet(`/v1/datasets/${datasetName}/quality`);
     } catch {
       const dataset = datasets[datasetName];
       return {
         dataset: dataset.label,
         ready: datasetName === 'risk_zone',
         backend: 'offline',
-        reason: 'JellyGuard 백엔드에 연결되지 않아 로컬 스키마만 확인했습니다.',
+        reason: 'MOPS 백엔드에 연결되지 않아 로컬 스키마만 확인했습니다.',
         requiredChecks: dataset.checks,
-        nextAction: 'JellyGuard 백엔드를 실행하고 연결 상태를 다시 확인하세요.',
+        nextAction: 'MOPS 백엔드를 실행하고 연결 상태를 다시 확인하세요.',
       };
     }
   },
@@ -130,11 +133,11 @@ const getRiskOverview = defineTool('get_risk_overview', {
   parameters: { type: 'object', properties: {} },
   handler: async () => {
     try {
-      return await jellyguardGet('/v1/dashboard/bootstrap');
+      return await mopsBackendGet('/v1/dashboard/bootstrap');
     } catch {
       return {
         status: 'offline',
-        message: 'JellyGuard 백엔드가 실행 중일 때 합성 이동영역과 감시격자를 조회할 수 있습니다.',
+        message: 'MOPS 백엔드가 실행 중일 때 합성 이동영역과 감시격자를 조회할 수 있습니다.',
       };
     }
   },
@@ -164,14 +167,16 @@ app.use(express.json({ limit: '64kb' }));
 
 app.get('/api/health', async (_req, res) => {
   try {
-    const [, jellyguard] = await Promise.all([
+    const [, mops] = await Promise.all([
       ensureCopilotStarted(),
-      jellyguardGet('/v1/datasets').then(() => 'ready').catch(() => 'offline'),
+      mopsBackendGet('/v1/datasets').then(() => 'ready').catch(() => 'offline'),
     ]);
     res.json({
       ok: true,
       copilot: 'ready',
-      jellyguard,
+      mops,
+      // Remove after older clients stop reading this compatibility field.
+      jellyguard: mops,
       datasets: Object.keys(datasets).length,
       credentials: credentialStatus,
     });
@@ -198,7 +203,7 @@ app.post('/api/copilot', async (req, res) => {
   try {
     await ensureCopilotStarted();
     const session = await copilot.createSession({
-      sessionId: `jellywatch-${crypto.randomUUID()}`,
+      sessionId: `mops-${crypto.randomUUID()}`,
       model: 'auto',
       tools: [listDatasets, getDatasetStatus, checkDatasetQuality, getRiskOverview],
       hooks: {
@@ -208,15 +213,15 @@ app.post('/api/copilot', async (req, res) => {
           }
           return {
             permissionDecision: 'deny' as const,
-            permissionDecisionReason: 'Jellywatch는 등록된 읽기 전용 데이터 도구만 허용합니다.',
+            permissionDecisionReason: 'MOPS는 등록된 읽기 전용 데이터 도구만 허용합니다.',
           };
         },
       },
       systemMessage: {
         content: [
           language === 'en'
-            ? 'You are a jellyfish research data manager for the Gyeongbuk East Sea coast.'
-            : '당신은 경상북도 동해안 해파리 연구 데이터 관리자입니다.',
+            ? 'You are the MOPS marine-organism path monitoring assistant for the Hanul public-data demo.'
+            : '당신은 한울 공개데이터 데모를 설명하는 MOPS 해양생물 이동 감시 도우미입니다.',
           language === 'en'
             ? 'Answer only with information available through the registered data tools.'
             : '등록된 데이터 도구로 확인할 수 있는 내용만 답하세요.',
@@ -226,6 +231,12 @@ app.post('/api/copilot', async (req, res) => {
           language === 'en'
             ? 'The tools are read-only. Never claim that you modified or deleted data.'
             : '현재 도구는 읽기 전용입니다. 수정이나 삭제를 했다고 말하지 마세요.',
+          language === 'en'
+            ? 'A direct observation may be historical CACHED data. Always state its observation date and that it is not real-time.'
+            : '직접관측은 과거 CACHED 자료일 수 있습니다. 관측일과 실시간 자료가 아님을 항상 함께 밝히세요.',
+          language === 'en'
+            ? 'SYNTHETIC transport is a conditional scenario, not a forecast. Never turn M of N into probability, ETA, risk score, or plant-operation advice.'
+            : 'SYNTHETIC 수송은 조건부 시나리오이며 실제 예보가 아닙니다. M of N을 확률·ETA·위험점수·원전 운전 권고로 바꾸지 마세요.',
           language === 'en'
             ? 'Reply in concise English, translate tool output naturally, and suggest one next action.'
             : '답변은 한국어로 간결하게 작성하고 다음 작업을 한 가지 제안하세요.',

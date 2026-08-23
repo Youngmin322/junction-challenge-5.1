@@ -8,8 +8,8 @@ const geist = Geist({
 });
 
 export const metadata: Metadata = {
-  title: 'Jellywatch | 해파리 데이터 관리 센터',
-  description: '경북 동해안 해파리 환경 데이터를 관리하는 로컬 Copilot 서비스',
+  title: 'MOPS | 한울 주변 대량 해파리 군집 감시',
+  description: '공개데이터 기반 해파리 관측·조건부 이동·감시격자 근거 조회 대시보드',
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
