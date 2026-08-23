@@ -2,18 +2,61 @@
 
 import Image from 'next/image';
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 
 type Message = { role: 'assistant' | 'user'; content: string };
 type ConnectionState = 'checking' | 'ready' | 'auth' | 'offline';
 type HealthResponse = { copilot?: string; mops?: string; jellyguard?: string };
 type CopilotResponse = { answer?: string; code?: string; error?: string };
+type Horizon = 3 | 6 | 12;
+type UnitFocus = 'north' | 'central' | 'south' | 'new';
+type UnitView = { id: string; label: string; focus: UnitFocus };
+type PlantOption = { id: string; label: string; units: readonly UnitView[]; connected: boolean };
 
 const copilotApiBase = process.env.NEXT_PUBLIC_COPILOT_API_BASE ?? 'http://localhost:3001';
 
+const plantOptions: readonly PlantOption[] = [
+  {
+    id: 'hanul', label: '한울', connected: true,
+    units: [
+      { id: 'hanul-12', label: '한울 1·2호기', focus: 'north' },
+      { id: 'hanul-34', label: '한울 3·4호기', focus: 'central' },
+      { id: 'hanul-56', label: '한울 5·6호기', focus: 'south' },
+      { id: 'shin-hanul-12', label: '신한울 1·2호기', focus: 'new' },
+    ],
+  },
+  {
+    id: 'kori', label: '고리', connected: false,
+    units: [
+      { id: 'kori-2', label: '고리 2호기', focus: 'north' },
+      { id: 'kori-34', label: '고리 3·4호기', focus: 'central' },
+    ],
+  },
+  {
+    id: 'saeul', label: '새울', connected: false,
+    units: [
+      { id: 'saeul-12', label: '새울 1·2호기', focus: 'north' },
+      { id: 'saeul-34', label: '새울 3·4호기', focus: 'central' },
+    ],
+  },
+  {
+    id: 'wolsong', label: '월성', connected: false,
+    units: [
+      { id: 'wolsong-12', label: '월성 1·2호기', focus: 'north' },
+      { id: 'wolsong-34', label: '월성 3·4호기', focus: 'central' },
+      { id: 'shin-wolsong-12', label: '신월성 1·2호기', focus: 'south' },
+    ],
+  },
+  {
+    id: 'hanbit', label: '한빛', connected: false,
+    units: [
+      { id: 'hanbit-12', label: '한빛 1·2호기', focus: 'north' },
+      { id: 'hanbit-34', label: '한빛 3·4호기', focus: 'central' },
+      { id: 'hanbit-56', label: '한빛 5·6호기', focus: 'south' },
+    ],
+  },
+] as const;
+
 const assets = {
-  mark: '/design-assets/mops-mark.svg',
   basemap: '/design-assets/abstract-basemap.svg',
   domain: '/design-assets/synth-domain-hatched.svg',
   envelope3: '/design-assets/synthetic-envelope-3h.png',
@@ -116,38 +159,129 @@ function Tag({ children, tone = 'default' }: { children: React.ReactNode; tone?:
   return <span className={`mops-tag mops-tag--${tone}`}>{children}</span>;
 }
 
-function MonitoringMap() {
+function WatchCell({ className, label, code }: { className: string; label: string; code: string }) {
+  return (
+    <div className={`watch-cell ${className}`}>
+      <Image alt="" height={10} src={assets.watchCellDot} width={10} />
+      <span><strong>{label}</strong><small>{code}</small></span>
+    </div>
+  );
+}
+
+function MonitoringMap({ selectedHorizon, onSelectHorizon, plant, unit, onSelectUnit }: {
+  selectedHorizon: Horizon;
+  onSelectHorizon: (horizon: Horizon) => void;
+  plant: PlantOption;
+  unit: UnitView;
+  onSelectUnit: (unitId: string) => void;
+}) {
+  const fixture = dashboardFixture;
+  const isHanul = plant.id === 'hanul';
+
   return (
     <section className="panel map-panel" aria-labelledby="map-title">
       <header className="panel-header map-header">
-        <div><h2 id="map-title">한울원전 조건부 접근 우선순위 지도</h2><p>해파리 밀집 관측과 Risk Zone 상세 지도</p></div>
-        <div className="layer-legend" aria-label="지도 레이어 범례">
-          <span><i className="legend-dot violet" />해파리 밀집</span>
-          <span><i className="legend-square orange" />Risk Zone</span>
-          <span><i className="legend-dot cyan" />감시격자</span>
-          <span><i className="legend-square rose" />감시선</span>
+        <h2 className="sr-only" id="map-title">{plant.label} 취수구 감시 화면</h2>
+        <div className="unit-tabs" aria-label={`${plant.label} 호기별 취수구 지도`}>
+          {plant.units.map((candidate) => (
+            <button
+              aria-pressed={candidate.id === unit.id}
+              className={candidate.id === unit.id ? 'is-active' : ''}
+              key={candidate.id}
+              onClick={() => onSelectUnit(candidate.id)}
+              type="button"
+            >
+              {candidate.label}
+            </button>
+          ))}
         </div>
       </header>
 
-      <div className="map-canvas">
-        <iframe className="risk-zone-frame" src="http://localhost:5173/" title="한울원전 조건부 접근 우선순위 지도" />
+      <div className={`map-canvas unit-view--${unit.focus} ${isHanul ? '' : 'is-unavailable'}`}>
+        <Image alt={`${plant.label} 취수구 주변 프로토타입 지도`} className="map-basemap" fill priority sizes="(max-width: 980px) 100vw, 920px" src={assets.basemap} />
+
+        {isHanul ? (
+          <>
+            <div className="synthetic-domain" aria-label="합성 도메인"><Image alt="" fill sizes="570px" src={assets.domain} /></div>
+            <Tag tone="orange">SYNTH_DOMAIN_HANUL_v1 · 지형 미반영</Tag>
+
+            {dashboardFixture.transport.horizons.map((horizon) => (
+              <button
+                aria-label={`${horizon}시간 합성 이동영역 선택`}
+                className={`envelope envelope--${horizon} ${selectedHorizon === horizon ? 'is-selected' : ''}`}
+                key={horizon}
+                onClick={() => onSelectHorizon(horizon)}
+                type="button"
+              >
+                <Image
+                  alt={`${horizon}시간 합성 이동영역`}
+                  fill
+                  sizes={horizon === 12 ? '258px' : horizon === 6 ? '170px' : '92px'}
+                  src={horizon === 12 ? assets.envelope12 : horizon === 6 ? assets.envelope6 : assets.envelope3}
+                />
+                <span>{horizon}h{horizon === 12 ? ' · SYNTHETIC' : ''}</span>
+              </button>
+            ))}
+
+            <div className="map-info-card report-card"><strong>보고서 맥락 · 좌표 없음</strong><span>NIFS 주간보고 fixture</span></div>
+            <div className="map-info-card roms-card"><strong>ROMS 면 field · {fixture.romsField.status}</strong><span>표시할 실측 면 field 없음 · vector 없음</span></div>
+
+            <WatchCell className="watch-cell--onyang" code="ONYANG" label="감시격자 온양" />
+            <WatchCell className="watch-cell--deokcheon" code="DEOKCHEON" label="감시격자 덕천" />
+            <WatchCell className="watch-cell--nagok" code="NAGOK" label="감시격자 나곡" />
+
+            <div className="observation-marker">
+              <span className="observation-card"><strong>가장 최근 확보 관측 · 데모 기준</strong><small>{fixture.observation.observedAt} · CACHED · 실시간 아님</small></span>
+              <span className="marker-ring">
+                <Image alt="" fill sizes="22px" src={assets.observationRing} />
+                <Image alt="" className="marker-dot" height={8} src={assets.observationDot} width={8} />
+              </span>
+            </div>
+
+            <div className="transport-card">
+              <strong>SYNTHETIC · {selectedHorizon}h 이동영역</strong>
+              <span>{fixture.transport.scenario} · {fixture.transport.members} members</span>
+              <small>실제 예보 아님 · watch-cell {fixture.intersection.sensitivity}</small>
+            </div>
+
+            <div className="selected-intake-view" aria-live="polite">
+              <strong>{unit.label} · 취수구 지도</strong>
+              <span>프로토타입 감시 뷰 · 실제 취수구 기하 미사용</span>
+            </div>
+
+            <div className="intersection-strip" title={`${fixture.intersection.watchCellId} watch-cell polygon intersection`}>
+              fixture · watch-cell · 나곡 {fixture.intersection.members} of {fixture.intersection.totalMembers} · 최초 교차 {fixture.intersection.firstWindow} · {fixture.intersection.sensitivity}
+            </div>
+          </>
+        ) : (
+          <div className="unavailable-map-state" role="status">
+            <span>DATA NOT CONNECTED</span>
+            <strong>{unit.label} 취수구 지도</strong>
+            <p>{plant.label} 원전 공개 관측·취수구 데이터는 아직 연결되지 않았습니다.<br />현재 MVP 계산과 관측 조회는 한울만 지원합니다.</p>
+          </div>
+        )}
       </div>
 
       <footer className="map-disclaimer">
-        <p><strong>Risk Zone은 해파리 밀집 관측과 같은 좌표계에 표시한 조건부 접근영역입니다.</strong> 실제 막힘 확률이나 시설 위험도를 뜻하지 않습니다.<br />관측은 CACHED, 이동영역은 SYNTHETIC 시나리오입니다.</p>
+        <Image alt="주의" height={16} src={assets.alert} width={16} />
+        <p>{isHanul ? <><strong>합성 유동장에 의존한 조건부 시나리오이며 실제 예보가 아닙니다.</strong> 해안선·육지·수심을 반영하지 않습니다.<br />공개 관측점 기반 프로토타입 감시격자이며 실제 취수구·안전계통 경계가 아닙니다.</> : <><strong>{plant.label} 자료 연결 전입니다.</strong> 데이터가 없다는 사실을 안전 또는 저위험으로 해석하지 않습니다.</>}</p>
       </footer>
     </section>
   );
 }
 
-function CopilotPanel({ state }: { state: ConnectionState }) {
+function CopilotPanel({ state, selectedHorizon, onSelectHorizon }: {
+  state: ConnectionState;
+  selectedHorizon: Horizon;
+  onSelectHorizon: (horizon: Horizon) => void;
+}) {
   const [messages, setMessages] = useState<Message[]>([
     { role: 'assistant', content: '2019-07-11 과거 관측을 최근 확보 관측으로 지정했습니다.\n합성 12h 시나리오는 READY이며 실제 예보가 아닙니다.' },
   ]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const quickPrompts = ['최근 확보 관측 근거', 'ROMS vector 없는 이유', '수송 엔진 차이'];
+  const quickPrompts = ['직접관측 / 보고서 구분', '면 유동장 없는 이유', '감시격자 근거'];
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
@@ -196,11 +330,7 @@ function CopilotPanel({ state }: { state: ConnectionState }) {
       <div className="quick-prompts">{quickPrompts.map((prompt) => <button key={prompt} onClick={() => void sendMessage(prompt)} type="button">{prompt}</button>)}</div>
 
       <div className="copilot-messages" ref={scrollRef} aria-live="polite">
-        {messages.map((message, index) => (
-          <div className={`copilot-message copilot-message--${message.role}`} key={`${message.role}-${index}`}>
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
-          </div>
-        ))}
+        {messages.map((message, index) => <p className={`copilot-message copilot-message--${message.role}`} key={`${message.role}-${index}`}>{message.content}</p>)}
         {loading && <p className="copilot-message is-loading">MOPS 데이터 도구를 확인하고 있습니다…</p>}
       </div>
 
@@ -218,7 +348,14 @@ function CopilotPanel({ state }: { state: ConnectionState }) {
         <header><strong>표층조건부 이동 · SYNTHETIC READY</strong><span>READY</span></header>
         <p>{dashboardFixture.transport.scenario} · 3/6/12h · {dashboardFixture.transport.members} members</p>
         <small>fixture · watch-cell core · 나곡 {dashboardFixture.intersection.members} of {dashboardFixture.intersection.totalMembers}<br />최초 교차 {dashboardFixture.intersection.firstWindow} · 실제 예보 아님</small>
-        <code>engine · {dashboardFixture.transport.engine} · {dashboardFixture.transport.seedId}</code>
+        <div className="run-summary-controls">
+          <div className="horizon-pills" aria-label="합성 이동영역 시간 선택">
+            {dashboardFixture.transport.horizons.map((horizon) => (
+              <button aria-pressed={selectedHorizon === horizon} className={selectedHorizon === horizon ? 'is-active' : ''} key={horizon} onClick={() => onSelectHorizon(horizon)} type="button">{horizon}h</button>
+            ))}
+          </div>
+          <button className="provenance-button" onClick={() => document.getElementById('provenance-title')?.scrollIntoView({ behavior: 'smooth', block: 'center' })} type="button">실행 근거 보기</button>
+        </div>
       </section>
     </aside>
   );
@@ -227,14 +364,20 @@ function CopilotPanel({ state }: { state: ConnectionState }) {
 function EvidenceGrid() {
   return (
     <section className="panel evidence-panel" aria-labelledby="evidence-title">
-      <header className="evidence-heading"><h2 id="evidence-title">증거층과 계산상태를 섞지 않고 조회</h2><p>과거 관측 ≠ 합성 시나리오 ≠ ROMS field</p></header>
+      <header className="evidence-heading"><h2 id="evidence-title">이어보기 · 증거층 탐색</h2><p>직접관측 · 보고서 catalog/context · 점 해양관측 · 조건부 시나리오 · 자료부족</p></header>
       <div className="evidence-grid">
         {evidenceCards.map((card) => (
           <article className={`evidence-card evidence-card--${card.tone}`} key={card.code}>
-            <header><span>{card.code}</span><strong>{card.state}</strong></header>
-            <h3>{card.title}</h3><code>{card.claim}</code>
-            <p>{card.lines.map((line) => <span key={line}>{line}</span>)}</p>
-            <small>{card.footer}</small>{'invariant' in card && <em>{card.invariant}</em>}
+            <div className="evidence-cover">
+              <span className="evidence-orb" aria-hidden="true">{card.code}</span>
+              <strong>{card.state}</strong>
+            </div>
+            <div className="evidence-progress" aria-hidden="true" />
+            <div className="evidence-body">
+              <h3>{card.title}</h3><code>{card.claim}</code>
+              <p>{card.lines.map((line) => <span key={line}>{line}</span>)}</p>
+              <small>{card.footer}</small>{'invariant' in card && <em>{card.invariant}</em>}
+            </div>
           </article>
         ))}
       </div>
@@ -263,9 +406,32 @@ function ProvenancePanel({ panelRef }: { panelRef: React.RefObject<HTMLElement |
 }
 
 export default function Home() {
+  const [selectedHorizon, setSelectedHorizon] = useState<Horizon>(12);
+  const [selectedPlantId, setSelectedPlantId] = useState('hanul');
+  const [selectedUnitId, setSelectedUnitId] = useState('hanul-12');
+  const [plantMenuOpen, setPlantMenuOpen] = useState(false);
   const [copilotState, setCopilotState] = useState<ConnectionState>('checking');
   const [backendState, setBackendState] = useState<ConnectionState>('checking');
+  const [healthCheck, setHealthCheck] = useState(0);
   const provenanceRef = useRef<HTMLElement>(null);
+  const plantPickerRef = useRef<HTMLDivElement>(null);
+  const selectedPlant = plantOptions.find((plant) => plant.id === selectedPlantId) ?? plantOptions[0];
+  const selectedUnit = selectedPlant.units.find((unit) => unit.id === selectedUnitId) ?? selectedPlant.units[0];
+
+  useEffect(() => {
+    function closePlantMenu(event: MouseEvent) {
+      if (!plantPickerRef.current?.contains(event.target as Node)) setPlantMenuOpen(false);
+    }
+    function closePlantMenuOnEscape(event: globalThis.KeyboardEvent) {
+      if (event.key === 'Escape') setPlantMenuOpen(false);
+    }
+    document.addEventListener('pointerdown', closePlantMenu);
+    document.addEventListener('keydown', closePlantMenuOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closePlantMenu);
+      document.removeEventListener('keydown', closePlantMenuOnEscape);
+    };
+  }, []);
 
   useEffect(() => {
     fetch(`${copilotApiBase}/api/health`)
@@ -277,27 +443,47 @@ export default function Home() {
         setBackendState((body.mops ?? body.jellyguard) === 'ready' ? 'ready' : 'offline');
       })
       .catch(() => { setCopilotState('offline'); setBackendState('offline'); });
-  }, []);
+  }, [healthCheck]);
 
-  function showContractDetails() {
-    provenanceRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    provenanceRef.current?.focus({ preventScroll: true });
+  function selectPlant(plantId: string) {
+    const plant = plantOptions.find((candidate) => candidate.id === plantId);
+    if (!plant) return;
+    setSelectedPlantId(plant.id);
+    setSelectedUnitId(plant.units[0].id);
+    setPlantMenuOpen(false);
   }
 
   return (
     <main className="mops-app">
       <div className="dashboard-shell">
         <header className="global-header">
-          <div className="brand"><Image alt="MOPS" height={32} priority src={assets.mark} width={32} /><div><h1>한울 주변 대량 해파리 군집 감시</h1><p>공개데이터 기반 조건부 이동·근거 조회</p></div></div>
-          <div className="header-meta"><span>HANUL DEMO</span><i /><strong>FIXTURE PREVIEW · 단일 브랜치 실행 아님</strong><Tag tone="local">SDK · LOCAL</Tag></div>
+          <div className="brand"><div><h1>원전 주변 해양 생물 이동 경로 예측 시스템</h1><p>MOPS_PUBLIC_DEMO · 조회 실행 2026.08.23 14:32 KST</p></div></div>
+          <Tag tone="local">SDK · LOCAL</Tag>
+          <div className="header-meta">
+            <div className="plant-picker" ref={plantPickerRef}>
+              <button aria-expanded={plantMenuOpen} aria-haspopup="menu" aria-label={`대상 원전: ${selectedPlant.label}`} className="plant-selector" onClick={() => setPlantMenuOpen((open) => !open)} type="button">
+                {selectedPlant.label}<span aria-hidden="true" className={plantMenuOpen ? 'is-open' : ''}>⌄</span>
+              </button>
+              {plantMenuOpen && (
+                <div className="plant-menu" role="menu" aria-label="원전 선택">
+                  {plantOptions.map((plant) => (
+                    <button aria-checked={plant.id === selectedPlant.id} className={plant.id === selectedPlant.id ? 'is-selected' : ''} key={plant.id} onClick={() => selectPlant(plant.id)} role="menuitemradio" type="button">
+                      <span>{plant.label}</span><small>{plant.connected ? 'MVP 연결' : '자료 연결 전'}</small>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <button className="refresh-button" onClick={() => setHealthCheck((value) => value + 1)} type="button">상태 다시 확인</button>
+          </div>
         </header>
 
         <section className="status-bar" aria-label="대시보드 상태 요약">
-          <div className="status-summary"><span className="status-light" /><strong>관측 READY · 합성 시나리오 READY</strong><p>실측 ROMS · NO_FIELD — 표시할 면 field 없음 · 합성 결과와 분리</p></div>
-          <div className="status-actions"><Tag tone="cached">CACHED 관측</Tag><Tag tone="live">LIVE 조건부 · Gate</Tag><Tag tone="synthetic">SYNTHETIC 사용</Tag><button onClick={showContractDetails} type="button">계약 상태 보기</button></div>
+          <div className="status-summary"><span className="status-light" /><strong>{selectedPlant.label} 감시 화면</strong><p>{selectedPlant.connected ? '실측 ROMS · NO_FIELD — 표시할 면 field 없음 · 합성 결과와 분리' : '현재 MVP 자료 연결 전 · 탐색 구조만 제공'}</p></div>
+          <div className="status-actions"><Tag tone="cached">{selectedPlant.connected ? 'CACHED 사용' : 'CACHED 미연결'}</Tag><Tag tone="live">{selectedPlant.connected ? 'LIVE 조건부 · GATE' : 'LIVE 미연결'}</Tag><Tag tone="synthetic">{selectedPlant.connected ? 'SYNTHETIC 사용' : 'SYNTHETIC 미허용'}</Tag></div>
         </section>
 
-        <div className="primary-grid"><MonitoringMap /><CopilotPanel state={copilotState} /></div>
+        <div className="primary-grid"><MonitoringMap onSelectHorizon={setSelectedHorizon} onSelectUnit={setSelectedUnitId} plant={selectedPlant} selectedHorizon={selectedHorizon} unit={selectedUnit} /><CopilotPanel onSelectHorizon={setSelectedHorizon} selectedHorizon={selectedHorizon} state={copilotState} /></div>
         <div className="secondary-grid"><EvidenceGrid /><ProvenancePanel panelRef={provenanceRef} /></div>
 
         <footer className="runtime-footer">
